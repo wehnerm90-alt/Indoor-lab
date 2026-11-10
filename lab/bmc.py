@@ -13,7 +13,7 @@ import threading
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import core
+from . import core, kvm
 
 HIER = os.path.dirname(os.path.abspath(__file__))
 SESSIONS = {}      # token -> servername
@@ -148,6 +148,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.rf_fehler(503, "BMC is rebooting, please wait")
         if pfad == "/":
             return self.senden(200, html("bmc.html"), "text/html")
+        if pfad == "/kvm":
+            return self.senden(200, html("kvm.html"), "text/html")
         if pfad == "/redfish/v1" and method == "GET":
             return self.senden(200, self.service_root())
         if pfad == "/redfish/v1/SessionService/Sessions" and method == "POST" or pfad == "/api/session" and method == "POST":
@@ -231,6 +233,16 @@ class Handler(BaseHTTPRequestHandler):
                 core.aktion(st, f"Flash {p['komponente']} {p['version']} gestartet (Web)")
             PENDING.pop(name, None)
             return self.senden(200, {"ok": True, "task": task})
+        if pfad == "/api/kvm/screen":
+            st = core.lesen()
+            return self.senden(200, kvm.bildschirm(st["servers"][name]))
+        if pfad == "/api/kvm/exec" and method == "POST":
+            d = self.json_body() or {}
+            st = core.lesen()
+            if kvm.bildschirm(st["servers"][name])["mode"] != "os":
+                return self.senden(409, {"output": "", "action": None, "message": "Host OS not running"})
+            out, akt = kvm.ausfuehren(name, str(d.get("cmd", ""))[:500])
+            return self.senden(200, {"output": out, "action": akt})
         if pfad == "/api/fw/cancel" and method == "POST":
             PENDING.pop(name, None)
             return self.senden(200, {"ok": True})

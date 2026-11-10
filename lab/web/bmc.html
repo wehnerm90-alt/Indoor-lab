@@ -52,7 +52,7 @@
   <div class="wrap">
     <nav>
       <a data-p="overview" class="on">Overview</a><a data-p="sensors">Sensors</a><a data-p="inventory">Hardware Inventory</a>
-      <a data-p="sel">Event Log (SEL)</a><a data-p="power">Power Control</a><a data-p="firmware">Firmware Update</a>
+      <a data-p="sel">Event Log (SEL)</a><a data-p="power">Power Control</a><a data-p="kvm">Remote Console</a><a data-p="firmware">Firmware Update</a>
     </nav>
     <main id="main"></main>
   </div>
@@ -106,6 +106,11 @@ function render() {
       <div class="row" style="margin-top:14px"><button onclick="pw('on')">Power On</button><button class="sec" onclick="pw('soft')">Graceful Shutdown</button>
       <button class="red" onclick="pw('off')">Force Off</button><button class="sec" onclick="pw('cycle')">Power Cycle</button></div></div>
       <h2 style="margin-top:22px">BMC</h2><button class="sec" onclick="bmcReset()">Reboot BMC</button>`;
+  } else if (page === 'kvm') {
+    m.innerHTML = `<h2>Remote Console (KVM)</h2><div class="card" style="max-width:560px"><div class="k">H5 Viewer</div>
+      <p>Opens the server's screen in a new window: BIOS POST while booting, Linux console afterwards
+      (login: <b>root</b>, any password). Diagnostic tools: nvidia-smi, fieldiag, dmesg, lspci, nvme, storcli64.</p>
+      <button onclick="window.open('/kvm','kvm_'+D.name,'width=1000,height=680')">Launch KVM</button></div>`;
   } else if (page === 'firmware') {
     const t = (D.tasks || []).slice(-1)[0];
     let flash = '';

@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>KVM (Lab)</title>
+<style>
+  html, body { margin:0; height:100%; background:#2b2f36; font-family:"Segoe UI", system-ui, sans-serif; }
+  #bar { background:#1f2a3a; color:#cfd8e3; display:flex; align-items:center; gap:8px; padding:6px 10px; font-size:13px; }
+  #bar b { color:#fff; margin-right:10px; } #bar .sp { flex:1; }
+  #bar button { background:#2b394d; color:#e6edf5; border:1px solid #3d4f69; border-radius:3px; padding:4px 10px; font:inherit; cursor:pointer; }
+  #bar button:hover { background:#36506f; }
+  #screen { position:absolute; top:36px; left:0; right:0; bottom:22px; background:#000; color:#c8c8c8; overflow:auto;
+            font:15px/1.35 "Cascadia Mono", Consolas, "DejaVu Sans Mono", monospace; padding:10px 14px; white-space:pre-wrap; word-break:break-all; outline:none; }
+  #screen.post { color:#e8e8e8; }
+  #nosig { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#888; font-size:20px; }
+  .cur { background:#c8c8c8; color:#000; animation:blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { background:transparent; color:inherit; } }
+  .bar2 { display:inline-block; width:300px; height:10px; border:1px solid #888; vertical-align:middle; } .bar2 i { display:block; height:100%; background:#3a7bd5; }
+  #status { position:absolute; bottom:0; left:0; right:0; height:22px; background:#1f2a3a; color:#8fa1b5; font-size:12px; line-height:22px; padding:0 10px; }
+</style>
+</head>
+<body>
+<div id="bar"><b id="title">KVM</b>
+  <button onclick="pw('on')">Power On</button><button onclick="pw('soft')">Power Off</button>
+  <button onclick="pw('cycle')">Reset</button><button onclick="cad()">Ctrl+Alt+Del</button>
+  <span class="sp"></span><span>Lab-Simulation</span>
+</div>
+<div id="screen" tabindex="0"></div>
+<div id="status">Click into the screen to type.</div>
+<script>
+const scr = document.getElementById('screen');
+let mode = null, host = '', phase = 'login', buf = '', lines = [], busy = false, hist = [], hpos = 0, user = '';
+const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+function prompt() { return phase === 'login' ? `${host} login: ` : phase === 'pass' ? 'Password: ' : `root@${host}:~# `; }
+function draw() {
+  if (mode === 'off') { scr.className = ''; scr.innerHTML = '<div id="nosig">No Signal</div>'; return; }
+  if (mode !== 'os') return;
+  const shown = phase === 'pass' ? '' : buf;
+  scr.innerHTML = esc(lines.join('\n')) + (lines.length ? '\n' : '') + (busy ? '' : esc(prompt() + shown) + '<span class="cur"> </span>');
+  scr.scrollTop = scr.scrollHeight;
+}
+function out(t) { lines.push(...String(t).split('\n')); if (lines.length > 3000) lines = lines.slice(-3000); }
+function loginScreen() { lines = ['', `Ubuntu 24.04 LTS ${host} tty1`, '']; phase = 'login'; buf = ''; draw(); }
+async function poll() {
+  let r;
+  try { r = await fetch('/api/kvm/screen'); } catch (e) { return; }
+  if (r.status === 401) { scr.innerHTML = '<div id="nosig">Session expired – please log in to the BMC web interface again.</div>'; return; }
+  if (r.status === 503) { scr.innerHTML = '<div id="nosig">BMC is rebooting …</div>'; mode = null; return; }
+  const d = await r.json();
+  if (d.mode === 'post') {
+    mode = 'post'; scr.className = 'post';
+    scr.innerHTML = esc(d.lines.join('\n')) + `\n\n<span class="bar2"><i style="width:${d.pct}%"></i></span>`;
+  } else if (d.mode === 'os') {
+    host = d.hostname; document.title = 'KVM ' + host; document.getElementById('title').textContent = 'KVM · ' + host;
+    if (mode !== 'os') { mode = 'os'; scr.className = ''; loginScreen(); }
+  } else { mode = 'off'; draw(); }
+}
+async function run(cmd) {
+  busy = true; draw();
+  try {
+    const r = await fetch('/api/kvm/exec', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({cmd})});
+    const d = await r.json();
+    if (d.action === 'clear') lines = [];
+    else if (d.action === 'logout') { busy = false; loginScreen(); return; }
+    if (d.output) out(d.output);
+    if (d.action === 'reboot' || d.action === 'off') { mode = null; }
+    if (r.status === 409) out('Connection to host lost.');
+  } catch (e) { out('(Verbindung zum BMC unterbrochen)'); }
+  busy = false; draw();
+}
+scr.addEventListener('keydown', e => {
+  if (mode !== 'os' || busy) return;
+  if (e.ctrlKey && e.key === 'l') { e.preventDefault(); lines = []; draw(); return; }
+  if (e.ctrlKey && e.key === 'c') { e.preventDefault(); out(prompt() + buf + '^C'); buf = ''; draw(); return; }
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const val = buf; buf = '';
+    if (phase === 'login') { out(prompt() + val); if (val.trim()) { user = val.trim(); phase = 'pass'; } draw(); return; }
+    if (phase === 'pass') {
+      out('Password: ');
+      if (user !== 'root' || !val) { out('', 'Login incorrect', ''); phase = 'login'; draw(); return; }
+      phase = 'shell'; out(`Welcome to Ubuntu 24.04 LTS (GNU/Linux 6.8.0-45-generic x86_64)  – Lab-Simulation`, '', 'Type "help" for available commands.', ''); draw(); return;
+    }
+    out(prompt() + val);
+    if (val.trim()) { hist.push(val); hpos = hist.length; run(val); } else draw();
+    return;
+  }
+  if (e.key === 'Backspace') { e.preventDefault(); buf = buf.slice(0, -1); draw(); return; }
+  if (e.key === 'ArrowUp' && phase === 'shell') { e.preventDefault(); if (hpos > 0) buf = hist[--hpos]; draw(); return; }
+  if (e.key === 'ArrowDown' && phase === 'shell') { e.preventDefault(); hpos = Math.min(hist.length, hpos + 1); buf = hist[hpos] || ''; draw(); return; }
+  if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) { e.preventDefault(); buf += e.key; draw(); }
+});
+scr.addEventListener('paste', e => { if (mode === 'os' && !busy) { buf += (e.clipboardData.getData('text') || '').replace(/\n/g, ' '); draw(); e.preventDefault(); } });
+async function pw(action) {
+  if (action !== 'on' && !confirm('Really ' + action + '?')) return;
+  await fetch('/api/power', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action})});
+  mode = null; poll();
+}
+function cad() { if (mode === 'os' && confirm('Send Ctrl+Alt+Del (reboot)?')) pw('cycle'); }
+scr.focus(); poll(); setInterval(poll, 1500);
+</script>
+</body>
+</html>

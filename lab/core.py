@@ -155,7 +155,7 @@ def neuer_server(name):
     m = MODELS[info["modell"]]
     s = {
         "name": name, "modell": info["modell"], "typ": m["typ"], "port": info["port"],
-        "rack": info["rack"], "sn": sn("2207", 8), "power": "on", "power_since": now(),
+        "rack": info["rack"], "sn": sn("2207", 8), "power": "on", "power_since": now() - 3 * 86400,
         "bmc_boot_until": 0, "bmc_ip": f"bmc-{name}",
         "fw": dict(m["fw"]),
         "comp": {
