@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Inspur-Lab: legt auf einem Proxmox-Host einen LXC-Container an und installiert das Lab.
 # Aufruf in der Proxmox-Shell (als root):
-#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/patricia181089-glitch/Indoor-lab/main/install.sh)"
+#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/wehnerm90-alt/Indoor-lab/main/install.sh)"
 set -euo pipefail
 
-REPO="${REPO:-https://github.com/patricia181089-glitch/Indoor-lab.git}"
+REPO="${REPO:-https://github.com/wehnerm90-alt/Indoor-lab.git}"
 HOSTNAME_CT="inspur-lab"
 gruen() { printf '\033[32m%s\033[0m\n' "$*"; }
 gelb()  { printf '\033[33m%s\033[0m\n' "$*"; }

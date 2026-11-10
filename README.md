@@ -12,7 +12,7 @@ Modellnamen dienen nur der Orientierung; Seriennummern, Versionen, Kunden und Ti
 In der Proxmox-Weboberfläche links auf den Server (`pve`) → **Shell**, dann:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/patricia181089-glitch/Indoor-lab/main/install.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/wehnerm90-alt/Indoor-lab/main/install.sh)"
 ```
 
 Das Skript legt einen kleinen Debian-Container `inspur-lab` an (2 Kerne, 1 GB RAM, 4 GB Platte),
