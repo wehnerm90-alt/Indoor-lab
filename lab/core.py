@@ -271,9 +271,14 @@ def sensoren(s):
     for i, g in enumerate(s["comp"]["gpu"]):
         v = None if not an or g["status"] == "offbus" else rnd.randint(34, 41) + (7 if fan_defekt else 0)
         out.append((f"GPU{i}_Temp", v, "degrees C", "ok" if v is not None or not an else "ns"))
+    fan_cfg = s.get("settings", {}).get("fan", {})
     for i, f in enumerate(s["comp"]["fan"]):
         for r in ("F", "R"):
-            v = 0 if f["status"] != "ok" else rnd.randint(7800, 9600) if an else rnd.randint(2400, 2800)
+            if fan_cfg.get("mode") == "Manual" and an:
+                soll = int(16000 * int(fan_cfg.get("duty", 60)) / 100)
+                v = 0 if f["status"] != "ok" else rnd.randint(soll - 150, soll + 150)
+            else:
+                v = 0 if f["status"] != "ok" else rnd.randint(7800, 9600) if an else rnd.randint(2400, 2800)
             out.append((f"FAN{i}_{r}_Speed", v, "RPM", "lcr" if v == 0 else "ok"))
     for i, p in enumerate(s["comp"]["psu"]):
         ok = p["status"] == "ok"

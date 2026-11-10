@@ -11,9 +11,10 @@ import secrets
 import sys
 import threading
 import urllib.parse
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import core, kvm
+from . import bmcdata, core, kvm
 
 HIER = os.path.dirname(os.path.abspath(__file__))
 SESSIONS = {}      # token -> servername
@@ -157,6 +158,9 @@ class Handler(BaseHTTPRequestHandler):
             if d.get("UserName", d.get("username")) == core.BMC_USER and d.get("Password", d.get("password")) == core.BMC_PASS:
                 token = secrets.token_hex(16)
                 SESSIONS[token] = name
+                with core.zustand() as st:
+                    bmcdata.audit(st["servers"][name], core.BMC_USER, f"Login from {self.client_address[0]}",
+                                  "Redfish" if pfad.startswith("/redfish") else "Web")
                 return self.senden(201, {"Id": token[:8], "UserName": core.BMC_USER},
                                    extra={"X-Auth-Token": token,
                                           "Set-Cookie": f"QSESSIONID={token}; Path=/; HttpOnly",
@@ -193,16 +197,56 @@ class Handler(BaseHTTPRequestHandler):
                 "power": s["power"], "fw": s["fw"], "sensoren": sens, "komponenten": komp,
                 "sel": [{"id": e["id"], "zeit": core.ts(e["t"]), "typ": e["typ"], "sensor": e["sensor"],
                          "event": e["event"], "dir": e["dir"]} for e in reversed(s["sel"])],
-                "tasks": s["tasks"][-3:], "pending": PENDING.get(name), "health": self.health(s)})
+                "tasks": s["tasks"][-3:], "pending": PENDING.get(name), "health": self.health(s),
+                "idl": bmcdata.idl(s), "alarme": bmcdata.alarme(s),
+                "audit": [{"zeit": core.ts(a["t"]), **a} for a in reversed(s.get("audit", [])[-150:])],
+                "settings": bmcdata.einstellungen(s), "uid": s.get("uid", False),
+                "build": "Jul 9 2024 11:32:18 CST" if s["fw"]["BMC"] == "4.27.0" else "Sep 30 2026 09:12:44 CST",
+                "bmc_since": max(s.get("bmc_boot_until", 0), st.get("erstellt", 0))})
         if pfad == "/api/power" and method == "POST":
             d = self.json_body() or {}
             with core.zustand() as st:
                 ok, msg = core.power(st, st["servers"][name], d.get("action", ""))
+                bmcdata.audit(st["servers"][name], core.BMC_USER, f"Power control: {d.get('action')}")
             return self.senden(200 if ok else 400, {"ok": ok, "message": msg})
-        if pfad == "/api/sel/clear" and method == "POST":
+        if pfad in ("/api/sel/clear", "/api/idl/clear") and method == "POST":
             with core.zustand() as st:
                 core.sel_clear(st, st["servers"][name])
-            return self.senden(200, {"ok": True})
+                bmcdata.audit(st["servers"][name], core.BMC_USER, "Clear " + ("IDL" if "idl" in pfad else "SEL"))
+            return self.senden(200, {"ok": True, "message": "Log cleared."})
+        if pfad == "/api/settings" and method == "POST":
+            d = self.json_body() or {}
+            bereich, werte = d.get("bereich"), d.get("werte")
+            if bereich not in bmcdata.STANDARD_EINSTELLUNGEN or werte is None:
+                return self.senden(400, {"ok": False, "message": "Invalid settings"})
+            with core.zustand() as st:
+                s = st["servers"][name]
+                e = bmcdata.einstellungen(s)
+                if isinstance(e[bereich], dict):
+                    e[bereich].update({k: v for k, v in werte.items() if k in e[bereich]})
+                else:
+                    e[bereich] = werte
+                bmcdata.audit(s, core.BMC_USER, f"Settings changed: {bereich}")
+            return self.senden(200, {"ok": True, "message": "Settings saved successfully."})
+        if pfad == "/api/uid" and method == "POST":
+            d = self.json_body() or {}
+            with core.zustand() as st:
+                st["servers"][name]["uid"] = bool(d.get("on"))
+                bmcdata.audit(st["servers"][name], core.BMC_USER, f"UID LED {'on' if d.get('on') else 'off'}")
+            return self.senden(200, {"ok": True, "message": "UID LED " + ("on" if d.get("on") else "off")})
+        if pfad == "/api/factory" and method == "POST":
+            with core.zustand() as st:
+                s = st["servers"][name]
+                s.pop("settings", None)
+                bmcdata.audit(s, core.BMC_USER, "Restore factory defaults")
+                core.bmc_reset(st, s)
+            return self.senden(200, {"ok": True, "message": "Factory defaults restored. BMC is rebooting."})
+        if pfad == "/api/onekey":
+            st = core.lesen()
+            s = st["servers"][name]
+            daten = bmcdata.onekey(s, st)
+            datei = f"onekeylog_{s['sn']}_{datetime.now():%Y%m%d%H%M%S}.tar.gz"
+            return self.senden(200, daten, "application/gzip", {"Content-Disposition": f'attachment; filename="{datei}"'})
         if pfad == "/api/bmc/reset" and method == "POST":
             with core.zustand() as st:
                 core.bmc_reset(st, st["servers"][name])
@@ -231,6 +275,7 @@ class Handler(BaseHTTPRequestHandler):
                     core.fw_fehler_merken(st, s, msg)
                     return self.senden(400, {"ok": False, "message": msg})
                 core.aktion(st, f"Flash {p['komponente']} {p['version']} gestartet (Web)")
+                bmcdata.audit(s, core.BMC_USER, f"Firmware update started: {p['komponente']} {p['version']}")
             PENDING.pop(name, None)
             return self.senden(200, {"ok": True, "task": task})
         if pfad == "/api/kvm/screen":

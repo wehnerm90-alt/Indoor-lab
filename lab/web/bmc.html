@@ -3,144 +3,321 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>BMC (Lab)</title>
+<title>Management System</title>
 <style>
-  :root { --bg:#f3f5f8; --side:#1f2a3a; --side2:#2b394d; --acc:#0a6ebd; --ok:#1f9d55; --warn:#d68a00; --crit:#d0312d; --tx:#1d2733; --mut:#6b7785; }
-  * { box-sizing: border-box; }
-  body { margin:0; font:14px/1.45 "Segoe UI", system-ui, sans-serif; color:var(--tx); background:var(--bg); }
-  #login { display:flex; align-items:center; justify-content:center; height:100vh; background:linear-gradient(135deg,#1f2a3a,#0a6ebd); }
-  .box { background:#fff; padding:32px 36px; border-radius:8px; width:340px; box-shadow:0 10px 40px #0005; }
-  .box h1 { margin:0 0 4px; font-size:20px; } .box p { margin:0 0 20px; color:var(--mut); }
-  input[type=text], input[type=password] { width:100%; padding:9px 10px; margin:6px 0 14px; border:1px solid #c9d1db; border-radius:4px; font:inherit; }
-  button { background:var(--acc); color:#fff; border:0; padding:8px 16px; border-radius:4px; font:inherit; cursor:pointer; }
-  button.sec { background:#e3e8ee; color:var(--tx); } button.red { background:var(--crit); } button:disabled { opacity:.5; cursor:default; }
-  #app { display:none; min-height:100vh; }
-  header { background:#fff; border-bottom:1px solid #dde3ea; padding:10px 20px; display:flex; align-items:center; gap:16px; }
-  header b { font-size:16px; } header .sp { flex:1; } .pill { padding:2px 10px; border-radius:12px; font-size:12px; color:#fff; }
-  .wrap { display:flex; } nav { width:210px; background:var(--side); min-height:calc(100vh - 49px); padding-top:8px; }
-  nav a { display:block; color:#cfd8e3; padding:10px 20px; text-decoration:none; cursor:pointer; } nav a.on, nav a:hover { background:var(--side2); color:#fff; border-left:3px solid var(--acc); padding-left:17px; }
-  main { flex:1; padding:20px 24px; max-width:1200px; }
-  h2 { margin:0 0 16px; font-size:19px; }
-  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; margin-bottom:18px; }
-  .card { background:#fff; border:1px solid #dde3ea; border-radius:6px; padding:14px 16px; }
-  .card .k { color:var(--mut); font-size:12px; text-transform:uppercase; letter-spacing:.04em; } .card .v { font-size:17px; margin-top:4px; }
-  table { width:100%; border-collapse:collapse; background:#fff; border:1px solid #dde3ea; }
-  th, td { text-align:left; padding:7px 10px; border-bottom:1px solid #edf0f4; font-size:13px; } th { background:#f7f9fb; color:var(--mut); font-weight:600; }
-  .ok { color:var(--ok); } .crit { color:var(--crit); font-weight:600; } .warn { color:var(--warn); }
-  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:6px; }
-  .bar { height:16px; background:#e3e8ee; border-radius:8px; overflow:hidden; margin:10px 0; } .bar div { height:100%; background:var(--acc); transition:width .5s; }
-  .msg { padding:10px 14px; border-radius:4px; margin:12px 0; } .msg.e { background:#fde8e7; color:#8a1f1b; } .msg.i { background:#e6f1fb; color:#0b4a7a; }
-  #reboot { position:fixed; inset:0; background:#1f2a3ae6; color:#fff; display:none; align-items:center; justify-content:center; font-size:20px; flex-direction:column; gap:10px; }
-  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin:8px 0; }
-  .lab { font-size:11px; color:var(--mut); }
+  :root { --blue:#1462ad; --blue2:#0f4f8f; --side:#ecf0f5; --sideh:#dfe5ec; --tx:#333; --mut:#888; --line:#e3e6ea;
+          --red:#e85e4f; --green:#16a34a; --btn:#3c8dbc; --crit:#d73925; --warn:#e08e0b; --ok:#00a65a; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.45 "Source Sans Pro","Segoe UI",system-ui,sans-serif; color:var(--tx); background:#ecf0f5; }
+  a { color:var(--blue); }
+  /* Login */
+  #login { display:flex; align-items:center; justify-content:center; height:100vh; background:#d2d6de; }
+  .lbox { width:380px; background:#fff; padding:28px 30px; box-shadow:0 2px 12px #0002; }
+  .lbox h1 { margin:0 0 18px; text-align:center; font-weight:300; font-size:30px; color:#444; }
+  .lbox h1 b { font-weight:600; }
+  .lbox input { width:100%; padding:10px 12px; border:1px solid #d2d6de; margin-bottom:14px; font:inherit; }
+  /* Kopf */
+  header { position:fixed; top:0; left:0; right:0; height:62px; background:var(--blue); color:#fff; display:flex; align-items:center; z-index:10; }
+  header .logo { width:270px; padding-left:24px; font-size:23px; font-weight:500; }
+  header .burger { font-size:24px; cursor:pointer; padding:0 16px; user-select:none; }
+  header .sp { flex:1; }
+  header select { height:34px; margin-right:18px; padding:0 8px; font:inherit; border:0; border-radius:2px; min-width:190px; }
+  header .hl { color:#fff; margin-right:22px; cursor:pointer; text-decoration:none; }
+  header .user { margin-right:20px; position:relative; cursor:pointer; font-weight:600; }
+  header .user ul { display:none; position:absolute; right:0; top:28px; background:#fff; color:#333; list-style:none; margin:0; padding:6px 0; box-shadow:0 4px 12px #0003; min-width:150px; }
+  header .user:hover ul { display:block; } header .user li { padding:7px 16px; } header .user li:hover { background:#f1f3f6; }
+  /* Seitenleiste */
+  aside { position:fixed; top:62px; bottom:0; left:0; width:270px; background:var(--side); overflow-y:auto; border-right:1px solid #d9dee4; transition:margin .2s; }
+  body.mini aside { margin-left:-270px; } body.mini main { margin-left:0; }
+  .fwbox { padding:18px 26px 22px; font-size:14px; border-bottom:1px solid #d9dee4; background:#f4f6f8; }
+  .fwbox a { color:#333; font-weight:600; } .fwbox div { margin-top:6px; }
+  .mi { display:flex; align-items:center; gap:12px; padding:15px 14px; cursor:pointer; color:#444; border-bottom:1px solid #dfe4ea; background:#e6eaef; font-size:16px; }
+  .mi:hover, .mi.on { background:var(--sideh); } .mi .ic { width:20px; text-align:center; opacity:.8; } .mi .ar { margin-left:auto; color:#777; transition:transform .15s; }
+  .mi.open .ar { transform:rotate(90deg); }
+  .sub { display:none; background:#f4f6f8; } .sub.open { display:block; }
+  .sub div { padding:8px 14px 8px 40px; cursor:pointer; color:#555; font-size:15.5px; } .sub div::before { content:"» "; margin-right:6px; }
+  .sub div:hover { color:#111; } .sub div.on { color:#111; font-weight:600; }
+  /* Inhalt */
+  main { margin:62px 0 0 270px; padding:22px 22px 40px; min-height:calc(100vh - 62px); transition:margin .2s; }
+  .ph { display:flex; align-items:baseline; gap:12px; margin:6px 4px 22px; }
+  .ph h1 { margin:0; font-size:27px; font-weight:400; } .ph small { color:#777; font-size:17px; }
+  .ph .q { display:inline-block; width:22px; height:22px; border-radius:50%; background:#4caf50; color:#fff; text-align:center; font-size:15px; line-height:22px; font-weight:700; }
+  .ph .bc { margin-left:auto; font-size:13.5px; color:#444; } .ph .bc span { color:#999; margin:0 8px; }
+  .panel { background:#fff; border-top:3px solid #fff; padding:18px 14px; box-shadow:0 1px 1px #0001; margin-bottom:18px; }
+  .panel h3 { margin:0 0 12px; font-size:17px; font-weight:600; }
+  .filters { display:flex; flex-wrap:wrap; align-items:center; gap:10px 12px; margin-bottom:12px; }
+  .filters label { font-weight:600; }
+  input[type=text], input[type=number], input[type=password], input[type=date], select.f { height:38px; border:1px solid #ccc; padding:0 12px; font:inherit; background:#fff; }
+  .btn { display:inline-flex; align-items:center; gap:6px; border:0; color:#fff; padding:9px 16px; font:inherit; cursor:pointer; border-radius:2px; background:var(--btn); }
+  .btn.red { background:var(--red); } .btn.green { background:var(--green); } .btn.gray { background:#f4f4f4; color:#444; border:1px solid #ddd; }
+  .btn:disabled { opacity:.5; cursor:default; }
+  .right { display:flex; justify-content:flex-end; gap:10px; margin:6px 0 12px; }
+  table { width:100%; border-collapse:collapse; } th { text-align:left; padding:10px 12px; border-bottom:2px solid #f0f0f0; font-weight:600; }
+  td { padding:12px; border-bottom:1px solid #f0f0f0; vertical-align:top; }
+  .qb { width:48px; height:40px; background:var(--btn); border:0; color:#fff; border-radius:3px; cursor:pointer; font-size:18px; font-weight:700; }
+  .Critical { color:var(--crit); font-weight:600; } .Warning { color:var(--warn); } .ok { color:var(--ok); }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:16px; margin-bottom:18px; }
+  .tile { background:#fff; display:flex; box-shadow:0 1px 1px #0001; min-height:86px; }
+  .tile .icn { width:86px; display:flex; align-items:center; justify-content:center; font-size:34px; color:#fff; }
+  .tile .tx { padding:12px 14px; } .tile .tx div:first-child { text-transform:uppercase; font-size:13px; color:#555; } .tile .tx div:last-child { font-size:20px; font-weight:600; margin-top:4px; }
+  .form { display:grid; grid-template-columns:240px minmax(240px,420px); gap:12px 18px; align-items:center; }
+  .form .full { grid-column:1 / -1; }
+  .msg { padding:10px 14px; margin:0 0 14px; border-left:4px solid; } .msg.ok { background:#e8f6ee; border-color:var(--ok); color:#155d36; } .msg.err { background:#fdecea; border-color:var(--crit); color:#8a1f12; }
+  .bar { height:18px; background:#eee; margin:10px 0; } .bar div { height:100%; background:var(--btn); transition:width .4s; }
+  #modal { position:fixed; inset:0; background:#0006; display:none; align-items:center; justify-content:center; z-index:20; }
+  #modal .box { background:#fff; width:560px; max-width:92vw; } #modal .hd { background:var(--blue); color:#fff; padding:12px 16px; font-size:17px; }
+  #modal .bd { padding:18px 16px; } #modal .ft { padding:10px 16px; text-align:right; border-top:1px solid #eee; }
+  #reboot { position:fixed; inset:0; background:#000a; color:#fff; display:none; align-items:center; justify-content:center; flex-direction:column; font-size:22px; z-index:30; }
+  .lab { color:#999; font-size:12px; }
+  .switch { width:46px; height:24px; }
 </style>
 </head>
 <body>
 <div id="login">
-  <div class="box">
-    <h1 id="ltitle">BMC</h1>
-    <p>Baseboard Management Controller &middot; Lab-Simulation</p>
-    <label>Username<input type="text" id="u" value="" autocomplete="username"></label>
-    <label>Password<input type="password" id="p" autocomplete="current-password"></label>
-    <button onclick="login()">Log In</button>
-    <div id="lerr" class="msg e" style="display:none"></div>
+  <div class="lbox">
+    <h1><b>Management</b> System</h1>
+    <input type="text" id="u" placeholder="Username" autocomplete="username">
+    <input type="password" id="p" placeholder="Password" autocomplete="current-password" onkeydown="if(event.key==='Enter')login()">
+    <button class="btn" style="width:100%;justify-content:center" onclick="login()">Sign in</button>
+    <div id="lerr" class="msg err" style="display:none;margin-top:14px"></div>
+    <p class="lab" style="text-align:center;margin:14px 0 0">Lab-Simulation – keine echte Hardware</p>
   </div>
 </div>
-<div id="app">
-  <header><b id="htitle">BMC</b><span id="hpower" class="pill"></span><span id="hhealth" class="pill"></span><span class="sp"></span>
-    <span class="lab">Lab-Simulation – keine echte Hardware</span><button class="sec" onclick="logout()">Log Out</button></header>
-  <div class="wrap">
-    <nav>
-      <a data-p="overview" class="on">Overview</a><a data-p="sensors">Sensors</a><a data-p="inventory">Hardware Inventory</a>
-      <a data-p="sel">Event Log (SEL)</a><a data-p="power">Power Control</a><a data-p="kvm">Remote Console</a><a data-p="firmware">Firmware Update</a>
-    </nav>
-    <main id="main"></main>
-  </div>
+
+<div id="app" style="display:none">
+  <header>
+    <div class="logo">Management System</div><div class="burger" onclick="document.body.classList.toggle('mini')">&#9776;</div>
+    <div class="sp"></div>
+    <select><option>US - English</option><option>中文</option><option>日本語</option></select>
+    <a class="hl" onclick="refresh()">&#10227; Refresh</a>
+    <div class="user">&#128100; admin &#9662;<ul><li onclick="go('users')">User Settings</li><li onclick="logout()">Sign out</li></ul></div>
+  </header>
+  <aside>
+    <div class="fwbox"><a href="#" onclick="go('fwinfo');return false">Firmware Information</a><div id="fwver"></div><div id="fwbuild"></div></div>
+    <div id="menu"></div>
+  </aside>
+  <main id="main"></main>
 </div>
-<div id="reboot"><div>BMC is rebooting …</div><div style="font-size:14px;opacity:.8">Bitte warten, die Seite verbindet sich automatisch neu.</div></div>
+
+<div id="modal"><div class="box"><div class="hd" id="mhd"></div><div class="bd" id="mbd"></div><div class="ft"><button class="btn" onclick="closeModal()">Close</button></div></div></div>
+<div id="reboot"><div>BMC is rebooting …</div><div style="font-size:15px;opacity:.8;margin-top:8px">The page will reconnect automatically.</div></div>
+
 <script>
-let D = null, page = 'overview', msg = '';
+const MENU = [
+  ['summary', '&#8962;', 'System Summary'],
+  ['info', '&#9432;', 'Information', [['sysinfo','System Information'],['fru','FRU Information'],['hw','Hardware Inventory'],['fwinfo','Firmware Information']]],
+  ['storage', '&#9776;', 'Storage'],
+  ['remote', '&#128421;', 'Remote Control', [['kvm','Remote Console (KVM)'],['vmedia','Virtual Media'],['uid','Locate (UID LED)']]],
+  ['logs', '&#128200;', 'Logs & Alarms', [['onekey','One-key Collection Log'],['alarms','Current Alarms'],['idl','IDL Log'],['sel','System Event Log'],['audit','Audit Log'],['logset','Log Settings'],['snmptrap','SNMP Trap Settings'],['snmpsg','SNMP Set/Get Settings'],['mail','Mail Alarm']]],
+  ['sensor', '&#9636;', 'Sensor'],
+  ['power', '&#9211;', 'Power Supply', [['powerctl','Power Control'],['psu','Power Supply Info'],['powercap','Power Capping']]],
+  ['fan', '&#10051;', 'Fan Settings'],
+  ['bmcset', '&#9881;', 'BMC Settings', [['network','Network'],['services','Services'],['ntp','Date & Time (NTP)'],['users','User Management'],['boot','BIOS Boot Options']]],
+  ['maint', '&#128295;', 'Maintenance', [['fwupdate','Firmware Update'],['factory','Restore Factory Defaults'],['bmcreboot','BMC Reboot']]],
+];
+const TITLES = {summary:['System Summary','Overview'], sysinfo:['System Information','Host'], fru:['FRU','Field Replaceable Units'], hw:['Hardware','Inventory'],
+  fwinfo:['Firmware','Information'], storage:['Storage','Drives & Controllers'], kvm:['Remote Console','H5Viewer'], vmedia:['Virtual Media','Image Redirection'],
+  uid:['Locate','UID LED'], onekey:['One-key Log','Collection'], alarms:['Current Alarms','Active Faults'], idl:['IDL','Diagnosic Logs'], sel:['SEL','System Event Log'],
+  audit:['Audit Log','User Operations'], logset:['Log Settings','Policy'], snmptrap:['SNMP Trap','Settings'], snmpsg:['SNMP Set/Get','Settings'], mail:['Mail Alarm','SMTP'],
+  sensor:['Sensor','Readings'], powerctl:['Power Control','Host'], psu:['Power Supply','Information'], powercap:['Power Capping','Policy'], fan:['Fan Settings','Control Mode'],
+  network:['Network','BMC Interface'], services:['Services','Ports'], ntp:['Date & Time','NTP'], users:['User Management','Accounts'], boot:['BIOS Boot Options','Next Boot'],
+  fwupdate:['Firmware Update','BMC / BIOS'], factory:['Factory Defaults','Restore'], bmcreboot:['BMC Reboot','Maintenance']};
+const FORMS = {
+  network: [['hostname','Hostname','text'],['mode','IP Source','select',['Static','DHCP']],['ip','IPv4 Address','text'],['netmask','Subnet Mask','text'],['gateway','Default Gateway','text'],['dns','DNS Server','text'],['ncsi','NCSI Mode','select',['Dedicated','Shared (OCP)','Shared (LOM)']],['vlan','VLAN Enable','bool'],['vlan_id','VLAN ID','number']],
+  services: [['web','Web Service','bool'],['web_port','Web Port','number'],['kvm','KVM Service','bool'],['kvm_port','KVM Port','number'],['ssh','SSH','bool'],['ssh_port','SSH Port','number'],['ipmi','IPMI over LAN','bool'],['ipmi_port','IPMI Port','number'],['snmp','SNMP','bool'],['snmp_port','SNMP Port','number'],['redfish','Redfish','bool']],
+  ntp: [['mode','Time Mode','select',['NTP','Manual']],['server1','NTP Server 1','text'],['server2','NTP Server 2','text'],['timezone','Time Zone','select',['Europe/Berlin','UTC','Asia/Shanghai','America/New_York']]],
+  mail: [['enable','Mail Alarm Enable','bool'],['smtp','SMTP Server','text'],['port','SMTP Port','number'],['sender','Sender Address','text'],['recipients','Recipients (comma separated)','text'],['level','Minimum Severity','select',['Info','Warning','Critical']]],
+  snmp_trap: [['enable','SNMP Trap Enable','bool'],['version','Version','select',['v1','v2c','v3']],['community','Community','text'],['dest1','Destination 1','text'],['dest2','Destination 2','text']],
+  snmp_setget: [['v2c','SNMPv1/v2c Enable','bool'],['ro_community','Read Community','text'],['v3','SNMPv3 Enable','bool'],['v3_user','SNMPv3 User','text']],
+  log: [['sel_policy','SEL Full Policy','select',['Circular','Linear']],['audit','Audit Log Enable','bool'],['syslog','Remote Syslog','bool'],['syslog_server','Syslog Server','text'],['syslog_port','Syslog Port','number']],
+  boot: [['mode','Boot Mode','select',['UEFI','Legacy']],['device','Boot Device','select',['Hard Disk','PXE','USB','CD/DVD','BIOS Setup']],['persist','Effective','select',['Once','Permanent']]],
+  powercap: [['enable','Power Capping Enable','bool'],['limit','Power Limit (W)','number']],
+  fan: [['mode','Fan Control Mode','select',['Auto','Manual']],['duty','Manual Duty Cycle (%)','number']],
+};
+const FORMPAGE = {network:'network', services:'services', ntp:'ntp', mail:'mail', snmptrap:'snmp_trap', snmpsg:'snmp_setget', logset:'log', boot:'boot', powercap:'powercap', fan:'fan'};
+let D = null, page = 'summary', msg = null, flashing = false, idlFilter = {sev:'All Events', dev:'All Events', kw:'', from:'', to:''};
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-async function api(p, opt) { const r = await fetch(p, opt); let j = {}; try { j = await r.json(); } catch(e) {} return [r.status, j]; }
+
+async function api(p, opt) { const r = await fetch(p, opt); let j = {}; try { j = await r.json(); } catch (e) {} return [r.status, j]; }
+async function post(p, body) { return api(p, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {})}); }
 async function login() {
-  const [c, j] = await api('/api/session', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username:$('#u').value, password:$('#p').value})});
-  if (c === 201) { show(); } else { $('#lerr').style.display='block'; $('#lerr').textContent = (j.error && j.error.message) || 'Login failed'; }
+  const [c, j] = await post('/api/session', {username: $('#u').value, password: $('#p').value});
+  if (c === 201) start(); else { $('#lerr').style.display = 'block'; $('#lerr').textContent = (j.error && j.error.message) || 'Login failed'; }
 }
 async function logout() { await api('/api/session', {method:'DELETE'}); location.reload(); }
 async function load() {
   const [c, j] = await api('/api/status');
   if (c === 503) { $('#reboot').style.display = 'flex'; return false; }
   $('#reboot').style.display = 'none';
-  if (c === 401) { $('#app').style.display='none'; $('#login').style.display='flex'; return false; }
+  if (c === 401) { $('#app').style.display = 'none'; $('#login').style.display = 'flex'; return false; }
   D = j; return true;
 }
-async function show() { if (await load()) { $('#login').style.display='none'; $('#app').style.display='block'; render(); } }
-document.querySelectorAll('nav a').forEach(a => a.onclick = () => { page = a.dataset.p; msg=''; document.querySelectorAll('nav a').forEach(x=>x.classList.remove('on')); a.classList.add('on'); render(); });
-function pill(el, txt, color) { el.textContent = txt; el.style.background = color; }
-function st(s) { return s === 'ok' ? '<span class="ok">OK</span>' : s === 'rebuild' ? '<span class="warn">Rebuild</span>' : `<span class="crit">${esc(s)}</span>`; }
+async function start() { if (await load()) { $('#login').style.display = 'none'; $('#app').style.display = 'block'; buildMenu(); render(); } }
+async function refresh() { await load(); render(); }
+
+function buildMenu() {
+  let h = '';
+  for (const [id, ic, name, subs] of MENU) {
+    if (!subs) { h += `<div class="mi" data-p="${id}" onclick="go('${id}')"><span class="ic">${ic}</span>${name}</div>`; continue; }
+    h += `<div class="mi grp" data-g="${id}" onclick="toggle('${id}')"><span class="ic">${ic}</span>${name}<span class="ar">&#8250;</span></div><div class="sub" id="sub_${id}">`;
+    for (const [sid, sname] of subs) h += `<div data-p="${sid}" onclick="go('${sid}')">${sname}</div>`;
+    h += '</div>';
+  }
+  $('#menu').innerHTML = h; markMenu();
+}
+function toggle(g) { $('#sub_' + g).classList.toggle('open'); document.querySelector(`[data-g="${g}"]`).classList.toggle('open'); }
+function markMenu() {
+  document.querySelectorAll('[data-p]').forEach(e => e.classList.toggle('on', e.dataset.p === page));
+  for (const [id, , , subs] of MENU) if (subs && subs.some(s => s[0] === page)) { $('#sub_' + id).classList.add('open'); document.querySelector(`[data-g="${id}"]`).classList.add('open'); }
+}
+function go(p) { page = p; msg = null; markMenu(); render(); }
+function head(p) {
+  const [t, s] = TITLES[p] || [p, ''];
+  return `<div class="ph"><h1>${t}</h1><small>${s}</small><span class="q" title="Lab-Simulation">?</span><div class="bc">&#8962; Home<span>&gt;</span>${t}</div></div>` +
+    (msg ? `<div class="msg ${msg.ok ? 'ok' : 'err'}">${esc(msg.text)}</div>` : '');
+}
+function sevClass(s) { return s === 'Critical' ? 'Critical' : s === 'Warning' ? 'Warning' : ''; }
+function stat(s) { return s === 'ok' ? '<span class="ok">Normal</span>' : s === 'rebuild' ? '<span class="Warning">Rebuilding</span>' : s === 'offbus' ? '<span class="Critical">Not Present</span>' : `<span class="Critical">${esc(s)}</span>`; }
+function tile(color, icon, k, v) { return `<div class="tile"><div class="icn" style="background:${color}">${icon}</div><div class="tx"><div>${k}</div><div>${v}</div></div></div>`; }
+function selRows(l) { return l.map(e => `<tr><td>${e.id}</td><td>${esc(e.zeit)}</td><td>${esc(e.typ)}</td><td>${esc(e.sensor)}</td><td class="${/Uncorrectable|Fail|Fault|Critical|Lost|CATERR/.test(e.event) ? 'Critical' : ''}">${esc(e.event)}</td><td>${esc(e.dir)}</td></tr>`).join(''); }
+
 function render() {
   if (!D) return;
-  document.title = `BMC ${D.name} (${D.modell})`; $('#htitle').textContent = `${D.modell} · ${D.name}`; $('#ltitle').textContent = `BMC ${D.name}`;
-  pill($('#hpower'), 'Power ' + D.power.toUpperCase(), D.power === 'on' ? 'var(--ok)' : '#6b7785');
-  pill($('#hhealth'), 'Health ' + D.health, D.health === 'OK' ? 'var(--ok)' : D.health === 'Warning' ? 'var(--warn)' : 'var(--crit)');
-  const m = $('#main'); const note = msg ? `<div class="msg ${msg.startsWith('!') ? 'e':'i'}">${esc(msg.replace(/^!/,''))}</div>` : '';
-  if (page === 'overview') {
-    m.innerHTML = `<h2>Overview</h2>${note}<div class="cards">
-      <div class="card"><div class="k">Model</div><div class="v">${esc(D.modell)}</div><div class="lab">${esc(D.beschreibung)}</div></div>
-      <div class="card"><div class="k">Serial Number</div><div class="v">${esc(D.sn)}</div></div>
-      <div class="card"><div class="k">Power</div><div class="v">${esc(D.power)}</div></div>
-      <div class="card"><div class="k">Health</div><div class="v ${D.health==='OK'?'ok':'crit'}">${esc(D.health)}</div></div></div>
-      <table><tr><th>Firmware</th><th>Version</th></tr>${Object.entries(D.fw).map(([k,v])=>`<tr><td>${k}</td><td>${esc(v)}</td></tr>`).join('')}</table>
-      <h2 style="margin-top:20px">Latest Events</h2>${selTable(D.sel.slice(0,6))}`;
-  } else if (page === 'sensors') {
-    m.innerHTML = `<h2>Sensors</h2><table><tr><th>Name</th><th>Reading</th><th>Unit</th><th>Status</th></tr>${D.sensoren.map(s=>`<tr><td>${esc(s.name)}</td><td>${s.wert===null?'N/A':esc(s.wert)}</td><td>${esc(s.einheit)}</td><td>${s.status==='ok'?'<span class=ok>Normal</span>':s.status==='ns'?'N/A':'<span class=crit>Critical</span>'}</td></tr>`).join('')}</table>`;
-  } else if (page === 'inventory') {
+  $('#fwver').textContent = D.fw.BMC; $('#fwbuild').textContent = D.build;
+  document.title = `Management System – ${D.name}`;
+  const m = $('#main'), p = page, S = D.settings;
+  if (p === 'summary') {
+    const alarms = D.alarme.length;
+    m.innerHTML = head(p) + `<div class="tiles">
+      ${tile(D.power === 'on' ? '#00a65a' : '#777', '&#9211;', 'Host Power', D.power.toUpperCase())}
+      ${tile(D.health === 'OK' ? '#00a65a' : D.health === 'Warning' ? '#f39c12' : '#dd4b39', '&#10084;', 'System Health', D.health)}
+      ${tile(alarms ? '#dd4b39' : '#00c0ef', '&#9888;', 'Current Alarms', alarms)}
+      ${tile(D.uid ? '#3c8dbc' : '#aaa', '&#128161;', 'UID LED', D.uid ? 'ON' : 'OFF')}</div>
+      <div class="panel"><h3>Device Information</h3><table>
+      <tr><td>Product Name</td><td>${esc(D.modell)} – ${esc(D.beschreibung)}</td></tr><tr><td>Serial Number</td><td>${esc(D.sn)}</td></tr>
+      <tr><td>BMC Version</td><td>${esc(D.fw.BMC)}</td></tr><tr><td>BIOS Version</td><td>${esc(D.fw.BIOS)}</td></tr>
+      <tr><td>BMC IP</td><td>${esc(S.network.ip)}</td></tr><tr><td>Host Name</td><td>${esc(S.network.hostname)}</td></tr></table></div>
+      <div class="panel"><h3>Latest Events</h3><table><tr><th>ID</th><th>Time</th><th>Sensor Type</th><th>Sensor</th><th>Event</th><th>Dir</th></tr>${selRows(D.sel.slice(0, 6))}</table></div>`;
+  } else if (p === 'sysinfo') {
+    const k = D.komponenten;
+    m.innerHTML = head(p) + `<div class="panel"><table>
+      <tr><td>Product</td><td>${esc(D.modell)}</td></tr><tr><td>Serial Number</td><td>${esc(D.sn)}</td></tr>
+      <tr><td>Processors</td><td>2 x Intel Xeon Platinum 8480+ (Lab)</td></tr><tr><td>Memory</td><td>${k.dimm.filter(d=>d.status==='ok').length * 64} GB (${k.dimm.length} slots)</td></tr>
+      <tr><td>GPUs</td><td>${k.gpu.length || '–'}</td></tr><tr><td>Power Supplies</td><td>${k.psu.length}</td></tr><tr><td>Fans</td><td>${k.fan.length}</td></tr>
+      <tr><td>Boot Mode</td><td>${esc(S.boot.mode)}</td></tr></table></div>`;
+  } else if (p === 'fru') {
+    m.innerHTML = head(p) + `<div class="panel"><h3>Builtin FRU Device (ID 0)</h3><table>
+      <tr><td>Board Manufacturer</td><td>Inspur (Lab)</td></tr><tr><td>Board Product</td><td>${esc(D.modell)}</td></tr><tr><td>Product Serial</td><td>${esc(D.sn)}</td></tr></table></div>` +
+      D.komponenten.psu.map((x, i) => `<div class="panel"><h3>PSU${i}_FRU (ID ${i + 1})</h3><table><tr><td>Product Serial</td><td>${esc(x.sn)}</td></tr></table></div>`).join('');
+  } else if (p === 'hw') {
     const names = {gpu:'GPU', baseboard:'HGX Baseboard', dimm:'Memory', psu:'Power Supply', fan:'Fan', nvme:'NVMe', hdd:'HDD'};
-    m.innerHTML = '<h2>Hardware Inventory</h2>' + Object.entries(D.komponenten).filter(([k,l])=>l.length).map(([k,l]) =>
-      `<h3 style="margin:16px 0 8px">${names[k]||k}</h3><table><tr><th>Name</th><th>Serial Number</th><th>Status</th></tr>${l.map(c=>`<tr><td>${esc(c.label)}</td><td>${c.status==='offbus'?'<span class=crit>not present</span>':esc(c.sn)}</td><td>${st(c.status)}${c.rebuild!==null&&c.status==='rebuild'?' '+c.rebuild+'%':''}</td></tr>`).join('')}</table>`).join('');
-  } else if (page === 'sel') {
-    m.innerHTML = `<h2>Event Log (SEL)</h2>${note}<div class="row"><button class="red" onclick="selClear()">Clear Event Log</button><button class="sec" onclick="selExport()">Download (CSV)</button><span class="lab">${D.sel.length} entries</span></div>${selTable(D.sel)}`;
-  } else if (page === 'power') {
-    m.innerHTML = `<h2>Power Control</h2>${note}<div class="card" style="max-width:520px"><div class="k">Current state</div><div class="v">${esc(D.power)}</div>
-      <div class="row" style="margin-top:14px"><button onclick="pw('on')">Power On</button><button class="sec" onclick="pw('soft')">Graceful Shutdown</button>
-      <button class="red" onclick="pw('off')">Force Off</button><button class="sec" onclick="pw('cycle')">Power Cycle</button></div></div>
-      <h2 style="margin-top:22px">BMC</h2><button class="sec" onclick="bmcReset()">Reboot BMC</button>`;
-  } else if (page === 'kvm') {
-    m.innerHTML = `<h2>Remote Console (KVM)</h2><div class="card" style="max-width:560px"><div class="k">H5 Viewer</div>
-      <p>Opens the server's screen in a new window: BIOS POST while booting, Linux console afterwards
-      (login: <b>root</b>, any password). Diagnostic tools: nvidia-smi, fieldiag, dmesg, lspci, nvme, storcli64.</p>
-      <button onclick="window.open('/kvm','kvm_'+D.name,'width=1000,height=680')">Launch KVM</button></div>`;
-  } else if (page === 'firmware') {
-    const t = (D.tasks || []).slice(-1)[0];
-    let flash = '';
-    if (t && t.state === 'Running') flash = `<div class="card"><div class="k">Flashing ${esc(t.komponente)} ${esc(t.version)}</div><div class="bar"><div style="width:${t.pct}%"></div></div>${t.pct}% – Do not power off the server.</div>`;
-    else if (D.pending) flash = `<div class="card"><div class="k">Image verified</div><table><tr><th>Component</th><th>Current</th><th>New</th><th>File</th></tr>
-        <tr><td>${esc(D.pending.komponente)}</td><td>${esc(D.pending.aktuell)}</td><td>${esc(D.pending.version)}</td><td>${esc(D.pending.datei)}</td></tr></table>
-        <div class="row"><label><input type="checkbox" checked> Preserve configuration</label></div>
-        <div class="row"><button onclick="flash()">Start Update</button><button class="sec" onclick="cancelFw()">Cancel</button></div></div>`;
-    else flash = `<div class="card"><div class="k">Upload firmware image</div><div class="row"><input type="file" id="fwf"><button onclick="upload()">Upload &amp; Verify</button></div>
-        <div class="lab">BMC: host may stay on, BMC reboots afterwards. BIOS: host must be powered off.</div></div>`;
-    m.innerHTML = `<h2>Firmware Update</h2>${note}<table style="margin-bottom:16px"><tr><th>Component</th><th>Version</th></tr>${Object.entries(D.fw).map(([k,v])=>`<tr><td>${k}</td><td>${esc(v)}</td></tr>`).join('')}</table>${flash}`;
+    m.innerHTML = head(p) + Object.entries(D.komponenten).filter(([k, l]) => l.length && k !== 'hdd' && k !== 'nvme').map(([k, l]) =>
+      `<div class="panel"><h3>${names[k]}</h3><table><tr><th>Name</th><th>Serial Number</th><th>Status</th></tr>${l.map(c => `<tr><td>${esc(c.label)}</td><td>${c.status === 'offbus' ? '–' : esc(c.sn)}</td><td>${stat(c.status)}</td></tr>`).join('')}</table></div>`).join('');
+  } else if (p === 'fwinfo') {
+    m.innerHTML = head(p) + `<div class="panel"><table><tr><th>Component</th><th>Version</th></tr>${Object.entries(D.fw).map(([k, v]) => `<tr><td>${k}</td><td>${esc(v)}</td></tr>`).join('')}</table>
+      <p class="lab">BMC build: ${esc(D.build)}</p></div>`;
+  } else if (p === 'storage') {
+    const k = D.komponenten; let h = head(p);
+    if (k.hdd.length) h += `<div class="panel"><h3>RAID Controller: MegaRAID 9560-8i (Lab) – FW ${esc(D.fw.RAID || '')}</h3><table><tr><th>Slot</th><th>Type</th><th>Serial</th><th>State</th></tr>${k.hdd.map((d, i) => `<tr><td>252:${i}</td><td>SAS HDD 8 TB</td><td>${esc(d.sn)}</td><td>${d.status === 'ok' ? '<span class=ok>Online</span>' : d.status === 'rebuild' ? `<span class=Warning>Rebuild ${d.rebuild}%</span>` : '<span class=Critical>Failed</span>'}</td></tr>`).join('')}</table></div>`;
+    if (k.nvme.length) h += `<div class="panel"><h3>NVMe (direct attached)</h3><table><tr><th>Slot</th><th>Model</th><th>Serial</th><th>State</th></tr>${k.nvme.map((d, i) => `<tr><td>NVMe${i}</td><td>U.2 3.84 TB</td><td>${d.status === 'ok' ? esc(d.sn) : '–'}</td><td>${stat(d.status)}</td></tr>`).join('')}</table></div>`;
+    m.innerHTML = h;
+  } else if (p === 'kvm') {
+    m.innerHTML = head(p) + `<div class="panel"><p>Opens the host console in a new window (BIOS POST while booting, Linux console afterwards – login <b>root</b>, any password).</p>
+      <button class="btn" onclick="window.open('/kvm','kvm_'+D.name,'width=1040,height=700')">Launch H5Viewer</button></div>`;
+  } else if (p === 'vmedia') {
+    m.innerHTML = head(p) + `<div class="panel"><div class="form"><label>Image URL (NFS/CIFS/HTTP)</label><input type="text" id="vm" value="${esc(S.vmedia.image)}" placeholder="http://server/ubuntu.iso">
+      <label>Status</label><div>${S.vmedia.mounted ? '<span class=ok>Mounted</span>' : 'Not mounted'}</div></div><div class="right">
+      <button class="btn" onclick="saveSet('vmedia',{image:$('#vm').value,mounted:true})">Mount</button><button class="btn gray" onclick="saveSet('vmedia',{mounted:false})">Unmount</button></div></div>`;
+  } else if (p === 'uid') {
+    m.innerHTML = head(p) + `<div class="panel"><p>UID LED is <b>${D.uid ? 'ON' : 'OFF'}</b>. Use it to find the server in the rack.</p>
+      <button class="btn" onclick="act('/api/uid',{on:true})">Turn On</button> <button class="btn gray" onclick="act('/api/uid',{on:false})">Turn Off</button></div>`;
+  } else if (p === 'onekey') {
+    m.innerHTML = head(p) + `<div class="panel"><p>Collects SEL, IDL, sensors, FRU, firmware versions and audit log into one archive. Customers often ask for this file.</p>
+      <a class="btn green" href="/api/onekey" style="text-decoration:none">&#11015; Collect &amp; Download</a></div>`;
+  } else if (p === 'alarms') {
+    m.innerHTML = head(p) + `<div class="panel"><table><tr><th>Severity</th><th>Component</th><th>Description</th></tr>${D.alarme.length ? D.alarme.map(a => `<tr><td class="${a.sev}">${a.sev}</td><td>${esc(a.komponente)}</td><td>${esc(a.text)}</td></tr>`).join('') : '<tr><td colspan=3 class="ok">No active alarms.</td></tr>'}</table></div>`;
+  } else if (p === 'idl') {
+    const devs = [...new Set(D.idl.map(x => x.typ))].sort();
+    const f = idlFilter;
+    let rows = D.idl.filter(x => (f.sev === 'All Events' || x.sev === f.sev) && (f.dev === 'All Events' || x.typ === f.dev) &&
+      (!f.kw || (x.desc + x.typ + x.code).toLowerCase().includes(f.kw.toLowerCase())) && (!f.from || x.zeit.slice(0, 10) >= f.from) && (!f.to || x.zeit.slice(0, 10) <= f.to));
+    m.innerHTML = head(p) + `<div class="panel"><div class="filters">
+      <label>Filter by Date</label><input type="date" value="${f.from}" onchange="idlFilter.from=this.value;render()"> - <input type="date" value="${f.to}" onchange="idlFilter.to=this.value;render()">
+      <label>Filter by Severity</label><select class="f" onchange="idlFilter.sev=this.value;render()">${['All Events','Info','Warning','Critical'].map(o => `<option ${o === f.sev ? 'selected' : ''}>${o}</option>`).join('')}</select>
+      <label>Filter by Device</label><select class="f" onchange="idlFilter.dev=this.value;render()">${['All Events', ...devs].map(o => `<option ${o === f.dev ? 'selected' : ''}>${o}</option>`).join('')}</select></div>
+      <div class="filters"><label>Filter by KeyWord</label><input type="text" placeholder="Input KeyWord" value="${esc(f.kw)}" onchange="idlFilter.kw=this.value;render()"></div>
+      <div class="right"><button class="btn red" onclick="if(confirm('Clear IDL?'))act('/api/idl/clear')">&#128465; Clear IDL</button><a class="btn green" style="text-decoration:none" href="/api/onekey">&#11015; Download Logs</a></div>
+      <table><tr><th>ID</th><th>Severity</th><th>Type</th><th>Description</th><th>Generated</th><th>Event Code</th><th>HostName</th><th>Handling Suggestion</th></tr>
+      ${rows.map(x => `<tr><td>${x.id}</td><td class="${sevClass(x.sev)}">${x.sev}</td><td>${esc(x.typ)}</td><td>${esc(x.desc)}</td><td style="white-space:nowrap">${esc(x.zeit)}</td><td>${esc(x.code)}</td><td>${esc(x.host)}</td><td><button class="qb" onclick='tip(${JSON.stringify(x.code)},${JSON.stringify(x.tipp)})'>?</button></td></tr>`).join('') || '<tr><td colspan=8>No entries.</td></tr>'}</table></div>`;
+  } else if (p === 'sel') {
+    m.innerHTML = head(p) + `<div class="panel"><div class="right"><button class="btn red" onclick="if(confirm('Clear all SEL entries?'))act('/api/sel/clear')">&#128465; Clear SEL</button><button class="btn green" onclick="selCsv()">&#11015; Download (CSV)</button></div>
+      <table><tr><th>ID</th><th>Time</th><th>Sensor Type</th><th>Sensor</th><th>Event</th><th>Dir</th></tr>${selRows(D.sel)}</table></div>`;
+  } else if (p === 'audit') {
+    m.innerHTML = head(p) + `<div class="panel"><table><tr><th>Time</th><th>User</th><th>Interface</th><th>Operation</th></tr>${D.audit.map(a => `<tr><td>${esc(a.zeit)}</td><td>${esc(a.user)}</td><td>${esc(a.quelle)}</td><td>${esc(a.aktion)}</td></tr>`).join('') || '<tr><td colspan=4>No entries.</td></tr>'}</table></div>`;
+  } else if (FORMPAGE[p]) {
+    const key = FORMPAGE[p], vals = S[key];
+    let extra = '';
+    if (p === 'fan') extra = `<div class="panel"><h3>Fan Speed</h3><table>${D.sensoren.filter(s => s.einheit === 'RPM').map(s => `<tr><td>${s.name}</td><td>${s.wert} RPM</td><td>${s.status === 'ok' ? '<span class=ok>Normal</span>' : '<span class=Critical>Critical</span>'}</td></tr>`).join('')}</table></div>`;
+    if (p === 'powercap') extra = `<div class="panel"><h3>Current Consumption</h3><p>${D.sensoren.filter(s => s.einheit === 'Watts').reduce((a, s) => a + (s.wert || 0), 0)} W total</p></div>`;
+    m.innerHTML = head(p) + `<div class="panel"><div class="form">${FORMS[key].map(([k, label, typ, opts]) => `<label>${label}</label>` + (
+      typ === 'select' ? `<select class="f" id="f_${k}">${opts.map(o => `<option ${o === vals[k] ? 'selected' : ''}>${o}</option>`).join('')}</select>` :
+      typ === 'bool' ? `<div><input type="checkbox" class="switch" id="f_${k}" ${vals[k] ? 'checked' : ''}></div>` :
+      `<input type="${typ}" id="f_${k}" value="${esc(vals[k])}">`)).join('')}</div>
+      <div class="right"><button class="btn" onclick="saveForm('${key}')">Save</button></div></div>` + extra;
+  } else if (p === 'sensor') {
+    m.innerHTML = head(p) + `<div class="panel"><table><tr><th>Name</th><th>Reading</th><th>Unit</th><th>Status</th></tr>${D.sensoren.map(s => `<tr><td>${esc(s.name)}</td><td>${s.wert === null ? 'N/A' : esc(s.wert)}</td><td>${esc(s.einheit)}</td><td>${s.status === 'ok' ? '<span class=ok>Normal</span>' : s.status === 'ns' ? 'N/A' : '<span class=Critical>Critical</span>'}</td></tr>`).join('')}</table></div>`;
+  } else if (p === 'powerctl') {
+    m.innerHTML = head(p) + `<div class="panel"><p>Current host power: <b>${D.power.toUpperCase()}</b></p><div class="filters">
+      <button class="btn" onclick="pw('on')">Power On</button><button class="btn gray" onclick="pw('soft')">Graceful Power Off</button>
+      <button class="btn red" onclick="pw('off')">Force Power Off</button><button class="btn gray" onclick="pw('cycle')">Power Cycle</button><button class="btn gray" onclick="pw('reset')">Hard Reset</button></div></div>`;
+  } else if (p === 'psu') {
+    m.innerHTML = head(p) + `<div class="panel"><table><tr><th>PSU</th><th>Serial</th><th>Output</th><th>Status</th></tr>${D.komponenten.psu.map((x, i) => {
+      const w = (D.sensoren.find(s => s.name === `PSU${i}_POut`) || {}).wert; return `<tr><td>PSU${i}</td><td>${esc(x.sn)}</td><td>${w ?? 0} W</td><td>${stat(x.status)}</td></tr>`; }).join('')}</table></div>`;
+  } else if (p === 'users') {
+    m.innerHTML = head(p) + `<div class="panel"><table><tr><th>User</th><th>Role</th><th>Enabled</th><th></th></tr>${S.users.map((u, i) => `<tr><td>${esc(u.name)}</td><td>${esc(u.role)}</td><td>${u.enabled ? 'Yes' : 'No'}</td><td>${u.name === 'admin' ? '' : `<button class="btn gray" onclick="delUser(${i})">Delete</button>`}</td></tr>`).join('')}</table></div>
+      <div class="panel"><h3>Add User</h3><div class="form"><label>Username</label><input type="text" id="nu"><label>Role</label><select class="f" id="nr"><option>Administrator</option><option>Operator</option><option>User</option></select></div>
+      <div class="right"><button class="btn" onclick="addUser()">Add</button></div></div>`;
+  } else if (p === 'fwupdate') {
+    const t = (D.tasks || []).slice(-1)[0]; let body;
+    if (t && t.state === 'Running') body = `<h3>Flashing ${esc(t.komponente)} ${esc(t.version)}</h3><div class="bar"><div style="width:${t.pct}%"></div></div><p>${t.pct}% – do not power off the server.</p>`;
+    else if (D.pending) body = `<h3>Image verified</h3><table><tr><th>Component</th><th>Current</th><th>New</th><th>File</th></tr><tr><td>${esc(D.pending.komponente)}</td><td>${esc(D.pending.aktuell)}</td><td>${esc(D.pending.version)}</td><td>${esc(D.pending.datei)}</td></tr></table>
+      <p><label><input type="checkbox" checked> Preserve configuration</label></p><div class="right"><button class="btn" onclick="act('/api/fw/flash')">Start Update</button><button class="btn gray" onclick="act('/api/fw/cancel')">Cancel</button></div>`;
+    else body = `<h3>Upload Image</h3><div class="filters"><input type="file" id="fwf"><button class="btn" onclick="upload()">Upload &amp; Verify</button></div><p class="lab">BMC: host may stay on, BMC reboots afterwards. BIOS: host must be powered off.</p>`;
+    m.innerHTML = head(p) + `<div class="panel"><table><tr><th>Component</th><th>Version</th></tr>${Object.entries(D.fw).map(([k, v]) => `<tr><td>${k}</td><td>${esc(v)}</td></tr>`).join('')}</table></div><div class="panel">${body}</div>`;
+  } else if (p === 'factory') {
+    m.innerHTML = head(p) + `<div class="panel"><p>Restores all BMC settings (network, services, users, alarms) to factory defaults. The BMC reboots afterwards.</p><button class="btn red" onclick="if(confirm('Restore factory defaults?'))act('/api/factory')">Restore Defaults</button></div>`;
+  } else if (p === 'bmcreboot') {
+    m.innerHTML = head(p) + `<div class="panel"><p>Reboots the BMC only. The host keeps running.</p><button class="btn red" onclick="if(confirm('Reboot BMC?'))act('/api/bmc/reset')">Reboot BMC</button></div>`;
   }
 }
-function selTable(l) { return `<table><tr><th>ID</th><th>Time</th><th>Sensor Type</th><th>Sensor</th><th>Event</th><th>Dir</th></tr>${l.map(e=>`<tr><td>${e.id}</td><td>${esc(e.zeit)}</td><td>${esc(e.typ)}</td><td>${esc(e.sensor)}</td><td class="${/Uncorrectable|Fail|Fault|Critical|Lost|CATERR/.test(e.event)?'crit':''}">${esc(e.event)}</td><td>${esc(e.dir)}</td></tr>`).join('')}</table>`; }
-async function act(p, body) { const [c, j] = await api(p, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body||{})}); msg = (c >= 400 ? '!' : '') + (j.message || (c < 400 ? 'Done.' : 'Error')); await load(); render(); return c; }
-function pw(a) { if (a !== 'on' && !confirm('Really ' + a + '?')) return; act('/api/power', {action:a}); }
-function selClear() { if (confirm('Clear all SEL entries?')) act('/api/sel/clear'); }
-function bmcReset() { if (confirm('Reboot the BMC?')) act('/api/bmc/reset'); }
-function selExport() { const csv = 'ID;Time;Type;Sensor;Event;Dir\n' + D.sel.map(e=>[e.id,e.zeit,e.typ,e.sensor,e.event,e.dir].join(';')).join('\n'); const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv])); a.download = `SEL_${D.name}.csv`; a.click(); }
-async function upload() {
-  const f = $('#fwf').files[0]; if (!f) { msg = '!Please choose a file.'; return render(); }
-  msg = 'Uploading and verifying …'; render();
-  const r = await fetch('/api/fw/upload', {method:'POST', headers:{'X-Filename': encodeURIComponent(f.name)}, body: f});
-  const j = await r.json(); msg = r.ok ? 'Image verified successfully.' : '!' + j.message; await load(); render();
+function tip(code, text) { $('#mhd').textContent = 'Handling Suggestion – ' + code; $('#mbd').textContent = text; $('#modal').style.display = 'flex'; }
+function closeModal() { $('#modal').style.display = 'none'; }
+async function act(p, body) { const [c, j] = await post(p, body); msg = {ok: c < 400, text: j.message || (c < 400 ? 'Done.' : 'Error')}; await load(); render(); }
+function pw(a) { if (a !== 'on' && !confirm('Really ' + a + '?')) return; act('/api/power', {action: a}); }
+async function saveSet(key, werte) { await act('/api/settings', {bereich: key, werte}); }
+function saveForm(key) {
+  const werte = {};
+  for (const [k, , typ] of FORMS[key]) { const el = $('#f_' + k); werte[k] = typ === 'bool' ? el.checked : typ === 'number' ? Number(el.value) : el.value; }
+  saveSet(key, werte);
 }
-async function flash() { await act('/api/fw/flash'); }
-async function cancelFw() { await act('/api/fw/cancel'); msg=''; render(); }
-setInterval(async () => { if ($('#app').style.display === 'block' || $('#reboot').style.display === 'flex') { const keep = page; if (await load()) { if ($('#app').style.display !== 'block') show(); else { const running = (D.tasks||[]).some(t => t.state === 'Running'); if (page !== 'firmware' || running || flashing) { flashing = running; render(); } } } } }, 3000);
-let flashing = false;
-show();
+function addUser() { const n = $('#nu').value.trim(); if (!n) return; saveSet('users', [...D.settings.users, {name: n, role: $('#nr').value, enabled: true}]); }
+function delUser(i) { const l = D.settings.users.slice(); l.splice(i, 1); saveSet('users', l); }
+function selCsv() { const csv = 'ID;Time;Type;Sensor;Event;Dir\n' + D.sel.map(e => [e.id, e.zeit, e.typ, e.sensor, e.event, e.dir].join(';')).join('\n'); const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv])); a.download = `SEL_${D.name}.csv`; a.click(); }
+async function upload() {
+  const f = $('#fwf').files[0]; if (!f) { msg = {ok:false, text:'Please choose a file.'}; return render(); }
+  const r = await fetch('/api/fw/upload', {method:'POST', headers:{'X-Filename': encodeURIComponent(f.name)}, body: f});
+  const j = await r.json(); msg = {ok: r.ok, text: r.ok ? 'Image verified successfully.' : j.message}; await load(); render();
+}
+setInterval(async () => {
+  if ($('#app').style.display !== 'block' && $('#reboot').style.display !== 'flex') return;
+  if (!(await load())) return;
+  if ($('#app').style.display !== 'block') { start(); return; }
+  const running = (D.tasks || []).some(t => t.state === 'Running');
+  const live = ['summary', 'sensor', 'alarms', 'storage', 'powerctl', 'psu'].includes(page);
+  if (live || (page === 'fwupdate' && (running || flashing))) { flashing = running; render(); }
+}, 4000);
+start();
 </script>
 </body>
 </html>
