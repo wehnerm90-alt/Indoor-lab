@@ -17,6 +17,11 @@ if pct list | awk 'NR>1{print $3}' | grep -qx "$HOSTNAME_CT"; then
   CTID=$(pct list | awk -v h="$HOSTNAME_CT" 'NR>1 && $3==h {print $1; exit}')
   gelb "Es gibt schon einen Container '$HOSTNAME_CT' (ID $CTID). Ich aktualisiere nur das Lab darin."
   pct start "$CTID" 2>/dev/null || true
+  if ! pct exec "$CTID" -- test -d /opt/inspur-lab 2>/dev/null; then
+    rot "Container $CTID ist unvollständig (frühere Installation abgebrochen)."
+    rot "Erst löschen:  pct stop $CTID; pct destroy $CTID   – dann dieses Skript nochmal starten."
+    exit 1
+  fi
   pct exec "$CTID" -- bash -c "cd /opt/inspur-lab && git pull -q && bash setup.sh"
   IP=$(pct exec "$CTID" -- hostname -I | awk '{print $1}')
   gruen "Fertig. Portal: http://$IP:8000"
@@ -30,8 +35,9 @@ TMPL_STORE="${TMPL_STORE:-$(pvesm status --content vztmpl | awk 'NR>1 && $3=="ac
 
 gruen "1/5  Container-Vorlage suchen …"
 pveam update >/dev/null
-TMPL=$(pveam available --section system | awk '{print $2}' | grep -E '^debian-13-standard' | sort -V | tail -1)
-[ -n "$TMPL" ] || TMPL=$(pveam available --section system | awk '{print $2}' | grep -E '^debian-12-standard' | sort -V | tail -1)
+ARCH=$(dpkg --print-architecture)   # amd64 auf Intel/AMD
+TMPL=$(pveam available --section system | awk '{print $2}' | grep -E "^debian-13-standard_.*_${ARCH}\." | sort -V | tail -1)
+[ -n "$TMPL" ] || TMPL=$(pveam available --section system | awk '{print $2}' | grep -E "^debian-12-standard_.*_${ARCH}\." | sort -V | tail -1)
 [ -n "$TMPL" ] || { rot "Keine Debian-Vorlage gefunden."; exit 1; }
 if ! pveam list "$TMPL_STORE" | grep -q "$TMPL"; then
   gruen "     lade $TMPL …"
