@@ -14,12 +14,19 @@ import urllib.parse
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import bmcdata, core, kvm
+from . import bmcdata, core, kvm, vshell
 
 HIER = os.path.dirname(os.path.abspath(__file__))
 SESSIONS = {}      # token -> servername
 PENDING = {}       # servername -> (komp, version, dateiname)
 LOCK = threading.Lock()
+
+
+_SH_LOCKS = {}
+
+
+def vshell_lock(sh):
+    return _SH_LOCKS.setdefault(id(sh), threading.Lock())
 
 
 def html(name):
@@ -281,6 +288,24 @@ class Handler(BaseHTTPRequestHandler):
         if pfad == "/api/kvm/screen":
             st = core.lesen()
             return self.senden(200, kvm.bildschirm(st["servers"][name]))
+        if pfad.startswith("/api/kvm/shell/") and method == "POST":
+            st = core.lesen()
+            if kvm.bildschirm(st["servers"][name])["mode"] != "os":
+                return self.senden(409, {"message": "Host OS not running"})
+            d = self.json_body() or {}
+            if pfad == "/api/kvm/shell/start":
+                sid = vshell.neu(name)
+                return self.senden(200, {"sid": sid, "prompt": vshell.holen(sid, name).prompt()})
+            sh = vshell.holen(str(d.get("sid", "")), name)
+            if not sh:
+                return self.senden(410, {"message": "Session expired"})
+            zeile = str(d.get("line", ""))[:2000]
+            if pfad == "/api/kvm/shell/exec":
+                with vshell_lock(sh):
+                    out, akt = sh.ausfuehren(zeile)
+                return self.senden(200, {"output": out, "action": akt, "prompt": sh.prompt()})
+            if pfad == "/api/kvm/shell/complete":
+                return self.senden(200, {"matches": sh.vervollstaendigen(zeile)[:200]})
         if pfad == "/api/kvm/exec" and method == "POST":
             d = self.json_body() or {}
             st = core.lesen()

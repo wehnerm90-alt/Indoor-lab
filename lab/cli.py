@@ -178,6 +178,12 @@ export LAB_SERVER={name}
 export PATH={os.path.join(core.BASE, "bin", "inband")}:$PATH
 export PS1='\\[\\033[1;31m\\]root@{name}\\[\\033[0m\\]:\\w# '
 alias fieldiag.sh=fieldiag
+_lab_power() {{ ipmitool chassis power "$1" >/dev/null; echo "Broadcast message from root@{name}: The system will $2 now!"; exit; }}
+reboot() {{ _lab_power cycle reboot; }}
+poweroff() {{ _lab_power soft "power off"; }}
+halt() {{ poweroff; }}
+shutdown() {{ case "$*" in *-r*) reboot;; *) poweroff;; esac; }}
+hostname() {{ echo {name}; }}
 echo
 echo "Eingeloggt auf {name} ({s['modell']}). Werkzeuge: nvidia-smi, fieldiag, dmesg, lspci, nvme list, storcli64, ipmitool"
 echo "Zurück mit: exit"
