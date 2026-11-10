@@ -6,8 +6,10 @@ DIR="$(pwd)"
 
 chmod +x bin/* bin/inband/*
 ln -sf "$DIR/bin/lab" /usr/local/bin/lab
+ln -sf "$DIR/bin/lab" /usr/bin/lab
 ln -sf "$DIR/bin/lab-bmc" /usr/local/bin/lab-bmc
 ln -sf "$DIR/bin/ipmitool" /usr/local/bin/ipmitool
+[ -e /usr/bin/ipmitool ] || ln -sf "$DIR/bin/ipmitool" /usr/bin/ipmitool
 mkdir -p /var/lib/inspur-lab
 
 # BMC-Namen auf den Container selbst zeigen lassen
