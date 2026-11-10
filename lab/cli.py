@@ -169,33 +169,77 @@ def cmd_server(a):
 
 
 def cmd_login(a):
+    """Lokale Konsole (tty1) des Servers – dieselbe emulierte Konsole wie in der BMC-KVM."""
+    import json as _json
+    import select
+    import shutil
+    import termios
+    import threading as _th
+    import tty as _tty
+    import urllib.request
     if not a or a[0] not in core.SERVERS:
         print("Welcher Server? z. B.: lab login gpu01")
         return
     name = a[0]
     s = core.lesen()["servers"][name]
     if s["power"] != "on" or s.get("phase") != "os":
-        print(f"ssh: connect to host {name} port 22: No route to host")
-        print(f"{Y}(Server ist nicht im Betriebssystem – Zustand: {phase_text(s)}{Y}. Bild über KVM im BMC.){X}")
+        print(f"{Y}Kein Betriebssystem aktiv – Zustand: {phase_text(s)}{Y}. POST/BIOS/Bootmenü siehst du in der KVM im BMC.{X}")
         return
-    if s.get("os") == "pe":
-        print(f"{Y}Der Server läuft gerade in der AI PE (Live-Stick). Die bedienst du über die KVM-Konsole im BMC.{X}")
+    basis = f"http://127.0.0.1:{core.SERVERS[name]['port']}"
+    cookie = {}
+
+    def req(pfad, daten, timeout=10):
+        r = urllib.request.Request(basis + pfad, data=_json.dumps(daten).encode(), method="POST",
+                                   headers={"Content-Type": "application/json", **({"Cookie": cookie["c"]} if cookie else {})})
+        with urllib.request.urlopen(r, timeout=timeout) as resp:
+            c = resp.headers.get("Set-Cookie")
+            if c:
+                cookie["c"] = c.split(";")[0]
+            return _json.loads(resp.read() or b"{}")
+    try:
+        req("/api/session", {"username": core.BMC_USER, "password": core.BMC_PASS})
+        cols, rows = shutil.get_terminal_size((100, 36))
+        att = req("/api/kvm/tty/attach", {"cols": cols, "rows": rows})
+    except Exception as e:  # noqa: BLE001
+        print(f"Konsole nicht erreichbar ({e}). Läuft der Lab-Dienst? systemctl status inspur-lab")
         return
-    rc = os.path.join(core.VAR, f"login_{name}.rc")
-    with open(rc, "w") as f:
-        f.write(f"""[ -f /etc/bash.bashrc ] && . /etc/bash.bashrc
-export LAB_SERVER={name}
-export PATH={os.path.join(core.BASE, "bin", "inband")}:{os.path.join(core.BASE, "bin")}:$PATH
-export PS1='root@{name}:\\w# '
-_lab_power() {{ ipmitool chassis power "$1" >/dev/null; echo "Broadcast message from root@{name}: The system will $2 now!"; exit; }}
-reboot() {{ _lab_power cycle reboot; }}
-poweroff() {{ _lab_power soft "power off"; }}
-shutdown() {{ case "$*" in *-r*) reboot;; *) poweroff;; esac; }}
-hostname() {{ echo {name}; }}
-""")
-    print(f"\nEingeloggt auf {name} (Kunden-OS, wie per SSH). Diagnose: nvidia-smi, dmesg, lspci, nvme list, storcli64, ipmitool")
-    print("fieldiag gibt es hier nicht (AI PE über KVM). Zurück mit: exit\n")
-    os.execvp("bash", ["bash", "--rcfile", rc, "-i"])
+    gen, pos = att["gen"], att["pos"]
+    print(f"{Y}Konsole {name} (tty1) – trennen mit Strg+]{X}")
+    fd = sys.stdin.fileno()
+    alt = termios.tcgetattr(fd)
+    ende = _th.Event()
+
+    def lesen():
+        p = pos
+        while not ende.is_set():
+            try:
+                d = req("/api/kvm/tty/poll", {"gen": gen, "pos": p}, timeout=15)
+            except Exception:  # noqa: BLE001
+                ende.set()
+                break
+            if d.get("data"):
+                sys.stdout.write(d["data"])
+                sys.stdout.flush()
+            p = d.get("pos", p)
+    try:
+        _tty.setraw(fd)
+        t = _th.Thread(target=lesen, daemon=True)
+        t.start()
+        while not ende.is_set():
+            r, _, _ = select.select([fd], [], [], 0.3)
+            if not r:
+                continue
+            daten = os.read(fd, 1024).decode("utf-8", "replace")
+            if "\x1d" in daten:
+                break
+            try:
+                req("/api/kvm/tty/input", {"gen": gen, "data": daten})
+            except Exception:  # noqa: BLE001
+                break
+    finally:
+        ende.set()
+        termios.tcsetattr(fd, termios.TCSADRAIN, alt)
+        print(f"\n{Y}Konsole getrennt.{X}")
 
 
 def cmd_karte(a):

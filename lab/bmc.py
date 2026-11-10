@@ -15,19 +15,13 @@ import urllib.parse
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import bmcdata, core, kvm, vshell
+from . import bmcdata, core, kvm
+from .emu import labsys
 
 HIER = os.path.dirname(os.path.abspath(__file__))
 SESSIONS = {}      # token -> servername
 PENDING = {}       # servername -> (komp, version, dateiname)
 LOCK = threading.Lock()
-
-
-_SH_LOCKS = {}
-
-
-def vshell_lock(sh):
-    return _SH_LOCKS.setdefault(id(sh), threading.Lock())
 
 
 def html(name):
@@ -318,33 +312,41 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     ok = False
             return self.senden(200 if ok else 409, {"ok": ok})
-        if pfad.startswith("/api/kvm/shell/") and method == "POST":
-            st = core.lesen()
-            if kvm.bildschirm(st["servers"][name])["mode"] != "os":
-                return self.senden(409, {"message": "Host OS not running"})
+        if pfad.startswith("/api/kvm/tty/") and method == "POST":
             d = self.json_body() or {}
-            if pfad == "/api/kvm/shell/start":
-                sid = vshell.neu(name)
-                return self.senden(200, {"sid": sid, "prompt": vshell.holen(sid, name).prompt()})
-            sh = vshell.holen(str(d.get("sid", "")), name)
-            if not sh or sh.boot_id != st["servers"][name].get("boot_id"):
-                return self.senden(410, {"message": "Session expired"})
-            zeile = str(d.get("line", ""))[:2000]
-            if pfad == "/api/kvm/shell/exec":
-                return self.senden(200 if sh.start(zeile) else 409, {"ok": True})
-            if pfad == "/api/kvm/shell/poll":
-                pos = int(d.get("pos", 0))
-                ende = time.time() + 5
-                while sh.laeuft and len(sh.puffer) <= pos and time.time() < ende:
-                    time.sleep(0.1)
-                daten, neu_pos = sh.abholen(pos)
-                return self.senden(200, {"data": daten, "pos": neu_pos, "running": sh.laeuft,
-                                         "prompt": sh.prompt(), "action": None if sh.laeuft else sh.aktion})
-            if pfad == "/api/kvm/shell/interrupt":
-                sh.unterbrechen()
+            st = core.lesen()
+            s = st["servers"][name]
+            bild = kvm.bildschirm(s)
+            if bild["mode"] != "os":
+                labsys.beenden(name)
+                return self.senden(410, {"message": "Host OS not running"})
+            try:
+                cols = max(20, min(400, int(d.get("cols") or 0))) if d.get("cols") else None
+                rows = max(5, min(200, int(d.get("rows") or 0))) if d.get("rows") else None
+            except (TypeError, ValueError):
+                cols = rows = None
+            if pfad == "/api/kvm/tty/attach":
+                k = labsys.konsole(name, s.get("boot_id"), s.get("os"), cols or 100, rows or 36)
+                return self.senden(200, {"gen": id(k), "pos": k.tty.basis})
+            k = labsys.konsole(name, s.get("boot_id"), s.get("os"), cols, rows)
+            if str(d.get("gen")) != str(id(k)):
+                return self.senden(410, {"message": "Console restarted"})
+            if pfad == "/api/kvm/tty/poll":
+                try:
+                    pos = int(d.get("pos", 0))
+                except (TypeError, ValueError):
+                    pos = 0
+                daten, neu_pos = k.tty.lesen_ab(pos, 5.0)
+                return self.senden(200, {"data": daten, "pos": neu_pos, "alive": k.tty.lebt})
+            if pfad == "/api/kvm/tty/input":
+                daten = str(d.get("data", ""))[:4096]
+                k.tty.feed(daten)
                 return self.senden(200, {"ok": True})
-            if pfad == "/api/kvm/shell/complete":
-                return self.senden(200, {"matches": sh.vervollstaendigen(zeile)[:200]})
+            if pfad == "/api/kvm/tty/resize":
+                if cols and rows:
+                    k.tty.cols, k.tty.rows = cols, rows
+                return self.senden(200, {"ok": True})
+            return self.rf_fehler(404, "Resource not found")
         if pfad == "/api/seen" and method == "POST":
             d = self.json_body() or {}
             with core.zustand() as st:

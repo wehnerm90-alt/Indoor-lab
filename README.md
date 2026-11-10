@@ -40,7 +40,7 @@ zurückstellen**. fieldiag gibt es *nicht* im Kunden-OS, sondern nur in der **AI
 2. **Vorher sichern:** FW-Stände (BMC-Startseite / `ipmitool … mc info`), FRU (`ipmitool … fru print`),
    **Onekey-Log** (BMC → Fault Diagnosis → One-key Log). SEL erst löschen, wenn die Logs gesichert sind.
 3. **Diagnose im Kunden-OS:** BMC → Remote Control → KVM, Login `root` + beliebiges Passwort
-   (oder `lab login gpu01`). `nvidia-smi`, `lspci`, `dmesg`, `nvme list`, `storcli64`.
+   (oder `lab login gpu01` – dieselbe Konsole im Terminal, trennen mit Strg+]). `nvidia-smi`, `lspci`, `dmesg`, `nvme list`, `storcli64`.
    ECC nach NVIDIA-Kriterium: **erst neu starten**, dann `nvidia-smi -q -d ROW_REMAPPER`.
    Nur wenn *Pending* oder *Remapping Failure* danach noch `Yes` ist → tauschen.
 4. **AI PE booten:** `lab stick gpu01` (oder ein AI-ISO über Virtual Media), in der KVM *Reset*,
@@ -70,6 +70,15 @@ zurückstellen**. fieldiag gibt es *nicht* im Kunden-OS, sondern nur in der **AI
 11. `lab pruefen` (Zwischenstand) → `lab abschluss` (Maintenance Process Checklist mit CASE-Nummer).
 
 `lab tipp` gibt Hinweise (kostet Punkte), `lab checkliste` zeigt die Abnahme-Punkte.
+
+## Die Konsole
+
+Die Konsole (KVM und `lab login`) ist ein emuliertes Ubuntu: Bash 5.2 mit Pipes, Umleitungen, Variablen,
+Schleifen, Funktionen, Tab-Vervollständigung, Verlauf (↑, Strg+R), Strg+C – und die üblichen Programme
+(ls, cat, grep, sed, awk, find, tar, less, nano, vi, top, systemctl, journalctl, ip, ps, …) mit den
+originalen Ausgaben, Fehlermeldungen und Exit-Codes. Es läuft dabei **nichts** auf dem echten Container:
+Dateisystem, Prozesse und Programme existieren nur im Speicher. Was du im Kunden-OS anlegst, bleibt bis zum
+nächsten Szenario; die AI PE vergisst alles beim Neustart (wie der echte Live-Stick).
 
 ## Szenarien
 
