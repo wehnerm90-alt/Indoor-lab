@@ -1,0 +1,5 @@
+#!/usr/bin/env python3
+import os, sys
+sys.path.insert(0, os.environ.get("LAB_HOME", "/opt/inspur-lab"))
+from lab.cli import main
+main()

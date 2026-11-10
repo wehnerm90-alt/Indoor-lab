@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BMC (Lab)</title>
+<style>
+  :root { --bg:#f3f5f8; --side:#1f2a3a; --side2:#2b394d; --acc:#0a6ebd; --ok:#1f9d55; --warn:#d68a00; --crit:#d0312d; --tx:#1d2733; --mut:#6b7785; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.45 "Segoe UI", system-ui, sans-serif; color:var(--tx); background:var(--bg); }
+  #login { display:flex; align-items:center; justify-content:center; height:100vh; background:linear-gradient(135deg,#1f2a3a,#0a6ebd); }
+  .box { background:#fff; padding:32px 36px; border-radius:8px; width:340px; box-shadow:0 10px 40px #0005; }
+  .box h1 { margin:0 0 4px; font-size:20px; } .box p { margin:0 0 20px; color:var(--mut); }
+  input[type=text], input[type=password] { width:100%; padding:9px 10px; margin:6px 0 14px; border:1px solid #c9d1db; border-radius:4px; font:inherit; }
+  button { background:var(--acc); color:#fff; border:0; padding:8px 16px; border-radius:4px; font:inherit; cursor:pointer; }
+  button.sec { background:#e3e8ee; color:var(--tx); } button.red { background:var(--crit); } button:disabled { opacity:.5; cursor:default; }
+  #app { display:none; min-height:100vh; }
+  header { background:#fff; border-bottom:1px solid #dde3ea; padding:10px 20px; display:flex; align-items:center; gap:16px; }
+  header b { font-size:16px; } header .sp { flex:1; } .pill { padding:2px 10px; border-radius:12px; font-size:12px; color:#fff; }
+  .wrap { display:flex; } nav { width:210px; background:var(--side); min-height:calc(100vh - 49px); padding-top:8px; }
+  nav a { display:block; color:#cfd8e3; padding:10px 20px; text-decoration:none; cursor:pointer; } nav a.on, nav a:hover { background:var(--side2); color:#fff; border-left:3px solid var(--acc); padding-left:17px; }
+  main { flex:1; padding:20px 24px; max-width:1200px; }
+  h2 { margin:0 0 16px; font-size:19px; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; margin-bottom:18px; }
+  .card { background:#fff; border:1px solid #dde3ea; border-radius:6px; padding:14px 16px; }
+  .card .k { color:var(--mut); font-size:12px; text-transform:uppercase; letter-spacing:.04em; } .card .v { font-size:17px; margin-top:4px; }
+  table { width:100%; border-collapse:collapse; background:#fff; border:1px solid #dde3ea; }
+  th, td { text-align:left; padding:7px 10px; border-bottom:1px solid #edf0f4; font-size:13px; } th { background:#f7f9fb; color:var(--mut); font-weight:600; }
+  .ok { color:var(--ok); } .crit { color:var(--crit); font-weight:600; } .warn { color:var(--warn); }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:6px; }
+  .bar { height:16px; background:#e3e8ee; border-radius:8px; overflow:hidden; margin:10px 0; } .bar div { height:100%; background:var(--acc); transition:width .5s; }
+  .msg { padding:10px 14px; border-radius:4px; margin:12px 0; } .msg.e { background:#fde8e7; color:#8a1f1b; } .msg.i { background:#e6f1fb; color:#0b4a7a; }
+  #reboot { position:fixed; inset:0; background:#1f2a3ae6; color:#fff; display:none; align-items:center; justify-content:center; font-size:20px; flex-direction:column; gap:10px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin:8px 0; }
+  .lab { font-size:11px; color:var(--mut); }
+</style>
+</head>
+<body>
+<div id="login">
+  <div class="box">
+    <h1 id="ltitle">BMC</h1>
+    <p>Baseboard Management Controller &middot; Lab-Simulation</p>
+    <label>Username<input type="text" id="u" value="" autocomplete="username"></label>
+    <label>Password<input type="password" id="p" autocomplete="current-password"></label>
+    <button onclick="login()">Log In</button>
+    <div id="lerr" class="msg e" style="display:none"></div>
+  </div>
+</div>
+<div id="app">
+  <header><b id="htitle">BMC</b><span id="hpower" class="pill"></span><span id="hhealth" class="pill"></span><span class="sp"></span>
+    <span class="lab">Lab-Simulation – keine echte Hardware</span><button class="sec" onclick="logout()">Log Out</button></header>
+  <div class="wrap">
+    <nav>
+      <a data-p="overview" class="on">Overview</a><a data-p="sensors">Sensors</a><a data-p="inventory">Hardware Inventory</a>
+      <a data-p="sel">Event Log (SEL)</a><a data-p="power">Power Control</a><a data-p="firmware">Firmware Update</a>
+    </nav>
+    <main id="main"></main>
+  </div>
+</div>
+<div id="reboot"><div>BMC is rebooting …</div><div style="font-size:14px;opacity:.8">Bitte warten, die Seite verbindet sich automatisch neu.</div></div>
+<script>
+let D = null, page = 'overview', msg = '';
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function api(p, opt) { const r = await fetch(p, opt); let j = {}; try { j = await r.json(); } catch(e) {} return [r.status, j]; }
+async function login() {
+  const [c, j] = await api('/api/session', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username:$('#u').value, password:$('#p').value})});
+  if (c === 201) { show(); } else { $('#lerr').style.display='block'; $('#lerr').textContent = (j.error && j.error.message) || 'Login failed'; }
+}
+async function logout() { await api('/api/session', {method:'DELETE'}); location.reload(); }
+async function load() {
+  const [c, j] = await api('/api/status');
+  if (c === 503) { $('#reboot').style.display = 'flex'; return false; }
+  $('#reboot').style.display = 'none';
+  if (c === 401) { $('#app').style.display='none'; $('#login').style.display='flex'; return false; }
+  D = j; return true;
+}
+async function show() { if (await load()) { $('#login').style.display='none'; $('#app').style.display='block'; render(); } }
+document.querySelectorAll('nav a').forEach(a => a.onclick = () => { page = a.dataset.p; msg=''; document.querySelectorAll('nav a').forEach(x=>x.classList.remove('on')); a.classList.add('on'); render(); });
+function pill(el, txt, color) { el.textContent = txt; el.style.background = color; }
+function st(s) { return s === 'ok' ? '<span class="ok">OK</span>' : s === 'rebuild' ? '<span class="warn">Rebuild</span>' : `<span class="crit">${esc(s)}</span>`; }
+function render() {
+  if (!D) return;
+  document.title = `BMC ${D.name} (${D.modell})`; $('#htitle').textContent = `${D.modell} · ${D.name}`; $('#ltitle').textContent = `BMC ${D.name}`;
+  pill($('#hpower'), 'Power ' + D.power.toUpperCase(), D.power === 'on' ? 'var(--ok)' : '#6b7785');
+  pill($('#hhealth'), 'Health ' + D.health, D.health === 'OK' ? 'var(--ok)' : D.health === 'Warning' ? 'var(--warn)' : 'var(--crit)');
+  const m = $('#main'); const note = msg ? `<div class="msg ${msg.startsWith('!') ? 'e':'i'}">${esc(msg.replace(/^!/,''))}</div>` : '';
+  if (page === 'overview') {
+    m.innerHTML = `<h2>Overview</h2>${note}<div class="cards">
+      <div class="card"><div class="k">Model</div><div class="v">${esc(D.modell)}</div><div class="lab">${esc(D.beschreibung)}</div></div>
+      <div class="card"><div class="k">Serial Number</div><div class="v">${esc(D.sn)}</div></div>
+      <div class="card"><div class="k">Power</div><div class="v">${esc(D.power)}</div></div>
+      <div class="card"><div class="k">Health</div><div class="v ${D.health==='OK'?'ok':'crit'}">${esc(D.health)}</div></div></div>
+      <table><tr><th>Firmware</th><th>Version</th></tr>${Object.entries(D.fw).map(([k,v])=>`<tr><td>${k}</td><td>${esc(v)}</td></tr>`).join('')}</table>
+      <h2 style="margin-top:20px">Latest Events</h2>${selTable(D.sel.slice(0,6))}`;
+  } else if (page === 'sensors') {
+    m.innerHTML = `<h2>Sensors</h2><table><tr><th>Name</th><th>Reading</th><th>Unit</th><th>Status</th></tr>${D.sensoren.map(s=>`<tr><td>${esc(s.name)}</td><td>${s.wert===null?'N/A':esc(s.wert)}</td><td>${esc(s.einheit)}</td><td>${s.status==='ok'?'<span class=ok>Normal</span>':s.status==='ns'?'N/A':'<span class=crit>Critical</span>'}</td></tr>`).join('')}</table>`;
+  } else if (page === 'inventory') {
+    const names = {gpu:'GPU', baseboard:'HGX Baseboard', dimm:'Memory', psu:'Power Supply', fan:'Fan', nvme:'NVMe', hdd:'HDD'};
+    m.innerHTML = '<h2>Hardware Inventory</h2>' + Object.entries(D.komponenten).filter(([k,l])=>l.length).map(([k,l]) =>
+      `<h3 style="margin:16px 0 8px">${names[k]||k}</h3><table><tr><th>Name</th><th>Serial Number</th><th>Status</th></tr>${l.map(c=>`<tr><td>${esc(c.label)}</td><td>${c.status==='offbus'?'<span class=crit>not present</span>':esc(c.sn)}</td><td>${st(c.status)}${c.rebuild!==null&&c.status==='rebuild'?' '+c.rebuild+'%':''}</td></tr>`).join('')}</table>`).join('');
+  } else if (page === 'sel') {
+    m.innerHTML = `<h2>Event Log (SEL)</h2>${note}<div class="row"><button class="red" onclick="selClear()">Clear Event Log</button><button class="sec" onclick="selExport()">Download (CSV)</button><span class="lab">${D.sel.length} entries</span></div>${selTable(D.sel)}`;
+  } else if (page === 'power') {
+    m.innerHTML = `<h2>Power Control</h2>${note}<div class="card" style="max-width:520px"><div class="k">Current state</div><div class="v">${esc(D.power)}</div>
+      <div class="row" style="margin-top:14px"><button onclick="pw('on')">Power On</button><button class="sec" onclick="pw('soft')">Graceful Shutdown</button>
+      <button class="red" onclick="pw('off')">Force Off</button><button class="sec" onclick="pw('cycle')">Power Cycle</button></div></div>
+      <h2 style="margin-top:22px">BMC</h2><button class="sec" onclick="bmcReset()">Reboot BMC</button>`;
+  } else if (page === 'firmware') {
+    const t = (D.tasks || []).slice(-1)[0];
+    let flash = '';
+    if (t && t.state === 'Running') flash = `<div class="card"><div class="k">Flashing ${esc(t.komponente)} ${esc(t.version)}</div><div class="bar"><div style="width:${t.pct}%"></div></div>${t.pct}% – Do not power off the server.</div>`;
+    else if (D.pending) flash = `<div class="card"><div class="k">Image verified</div><table><tr><th>Component</th><th>Current</th><th>New</th><th>File</th></tr>
+        <tr><td>${esc(D.pending.komponente)}</td><td>${esc(D.pending.aktuell)}</td><td>${esc(D.pending.version)}</td><td>${esc(D.pending.datei)}</td></tr></table>
+        <div class="row"><label><input type="checkbox" checked> Preserve configuration</label></div>
+        <div class="row"><button onclick="flash()">Start Update</button><button class="sec" onclick="cancelFw()">Cancel</button></div></div>`;
+    else flash = `<div class="card"><div class="k">Upload firmware image</div><div class="row"><input type="file" id="fwf"><button onclick="upload()">Upload &amp; Verify</button></div>
+        <div class="lab">BMC: host may stay on, BMC reboots afterwards. BIOS: host must be powered off.</div></div>`;
+    m.innerHTML = `<h2>Firmware Update</h2>${note}<table style="margin-bottom:16px"><tr><th>Component</th><th>Version</th></tr>${Object.entries(D.fw).map(([k,v])=>`<tr><td>${k}</td><td>${esc(v)}</td></tr>`).join('')}</table>${flash}`;
+  }
+}
+function selTable(l) { return `<table><tr><th>ID</th><th>Time</th><th>Sensor Type</th><th>Sensor</th><th>Event</th><th>Dir</th></tr>${l.map(e=>`<tr><td>${e.id}</td><td>${esc(e.zeit)}</td><td>${esc(e.typ)}</td><td>${esc(e.sensor)}</td><td class="${/Uncorrectable|Fail|Fault|Critical|Lost|CATERR/.test(e.event)?'crit':''}">${esc(e.event)}</td><td>${esc(e.dir)}</td></tr>`).join('')}</table>`; }
+async function act(p, body) { const [c, j] = await api(p, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body||{})}); msg = (c >= 400 ? '!' : '') + (j.message || (c < 400 ? 'Done.' : 'Error')); await load(); render(); return c; }
+function pw(a) { if (a !== 'on' && !confirm('Really ' + a + '?')) return; act('/api/power', {action:a}); }
+function selClear() { if (confirm('Clear all SEL entries?')) act('/api/sel/clear'); }
+function bmcReset() { if (confirm('Reboot the BMC?')) act('/api/bmc/reset'); }
+function selExport() { const csv = 'ID;Time;Type;Sensor;Event;Dir\n' + D.sel.map(e=>[e.id,e.zeit,e.typ,e.sensor,e.event,e.dir].join(';')).join('\n'); const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv])); a.download = `SEL_${D.name}.csv`; a.click(); }
+async function upload() {
+  const f = $('#fwf').files[0]; if (!f) { msg = '!Please choose a file.'; return render(); }
+  msg = 'Uploading and verifying …'; render();
+  const r = await fetch('/api/fw/upload', {method:'POST', headers:{'X-Filename': encodeURIComponent(f.name)}, body: f});
+  const j = await r.json(); msg = r.ok ? 'Image verified successfully.' : '!' + j.message; await load(); render();
+}
+async function flash() { await act('/api/fw/flash'); }
+async function cancelFw() { await act('/api/fw/cancel'); msg=''; render(); }
+setInterval(async () => { if ($('#app').style.display === 'block' || $('#reboot').style.display === 'flex') { const keep = page; if (await load()) { if ($('#app').style.display !== 'block') show(); else { const running = (D.tasks||[]).some(t => t.state === 'Running'); if (page !== 'firmware' || running || flashing) { flashing = running; render(); } } } } }, 3000);
+let flashing = false;
+show();
+</script>
+</body>
+</html>

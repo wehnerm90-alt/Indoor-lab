@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inspur-Lab – Ticket-Portal</title>
+<style>
+  body { margin:0; font:14px/1.5 "Segoe UI", system-ui, sans-serif; background:#eef1f5; color:#1d2733; }
+  header { background:#16324f; color:#fff; padding:14px 24px; display:flex; align-items:baseline; gap:14px; }
+  header b { font-size:18px; } header span { opacity:.75; font-size:13px; }
+  main { max-width:1100px; margin:0 auto; padding:20px; display:grid; gap:18px; }
+  section { background:#fff; border:1px solid #d9e0e8; border-radius:8px; padding:16px 20px; }
+  h2 { margin:0 0 12px; font-size:16px; }
+  .tk { display:grid; grid-template-columns:130px 1fr; gap:4px 12px; } .tk div:nth-child(odd) { color:#6b7785; }
+  .case { float:right; font-weight:600; background:#fff4d6; padding:2px 10px; border-radius:4px; }
+  table { width:100%; border-collapse:collapse; } th, td { text-align:left; padding:7px 8px; border-bottom:1px solid #edf0f4; } th { color:#6b7785; font-weight:600; font-size:12px; }
+  a { color:#0a6ebd; } .ok { color:#1f9d55; } .off { color:#d0312d; } .mut { color:#6b7785; font-size:12px; }
+  .meldung { background:#f7f9fb; border-left:3px solid #0a6ebd; padding:8px 12px; margin:10px 0; }
+  code { background:#f1f3f6; padding:1px 5px; border-radius:3px; }
+</style>
+</head>
+<body>
+<header><b>Inspur-Lab</b><span>Ticket-Portal (Übung, alle Daten fiktiv)</span></header>
+<main>
+  <section id="ticket"><h2>Aktuelles Ticket</h2><div class="mut">Lädt …</div></section>
+  <section><h2>Server</h2><table id="server"></table><p class="mut">BMC-Login: <code>admin</code> / <code>admin</code></p></section>
+  <section><h2>Firmware-Depot</h2><p><a href="/firmware/">Alle Dateien anzeigen</a> · <a href="/firmware/SHA256SUMS">SHA256SUMS</a> · <a href="/firmware/RELEASE-NOTES.txt">Release Notes</a></p></section>
+  <section><h2>Verlauf</h2><table id="verlauf"></table></section>
+</main>
+<script>
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function load() {
+  const d = await (await fetch('/api/portal')).json();
+  const t = d.ticket;
+  document.querySelector('#ticket').innerHTML = !t ? '<h2>Aktuelles Ticket</h2><p>Kein Ticket offen. In der Konsole: <code>lab neu</code></p>' :
+    `<h2>Aktuelles Ticket ${t.abgeschlossen ? '<span class="ok">(abgeschlossen)</span>' : ''}<span class="case">CASE: ${esc(t.case)}</span></h2>
+     <div class="tk"><div>Ticket</div><div>${esc(t.nr)}</div><div>Kunde</div><div>${esc(t.kunde)}</div><div>Server</div><div>${esc(t.server)}</div>
+     <div>Betreff</div><div>${esc(t.titel)}</div><div>Ersatzteile</div><div>${esc(t.teile.join(', ') || 'keine')}</div></div>
+     <div class="meldung">${esc(t.meldung)}</div><div class="mut">Abmelden in der Konsole mit <code>lab abschluss</code></div>`;
+  document.querySelector('#server').innerHTML = '<tr><th>Server</th><th>Modell</th><th>SN</th><th>Rack</th><th>Strom</th><th>BMC</th></tr>' +
+    d.servers.map(s => `<tr><td>${s.name}</td><td>${s.modell}</td><td>${s.sn}</td><td>${s.rack}</td><td class="${s.power==='on'?'ok':'off'}">${s.power}</td>
+      <td>${s.bmc_ok ? `<a href="${s.url}" target="_blank">${s.url}</a>` : 'startet neu …'}</td></tr>`).join('');
+  document.querySelector('#verlauf').innerHTML = d.verlauf.length ? '<tr><th>Ticket</th><th>Betreff</th><th>Server</th><th>Punkte</th></tr>' +
+    d.verlauf.slice().reverse().map(v => `<tr><td>${esc(v.nr)}</td><td>${esc(v.titel)}</td><td>${esc(v.server)}</td><td>${v.score}</td></tr>`).join('') : '<tr><td class="mut">Noch keine abgeschlossenen Tickets.</td></tr>';
+}
+load(); setInterval(load, 5000);
+</script>
+</body>
+</html>
