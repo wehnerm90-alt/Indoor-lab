@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 DIR="$(pwd)"
 
-chmod +x bin/* bin/inband/*
+chmod +x bin/* bin/inband/* bin/pe/*
 ln -sf "$DIR/bin/lab" /usr/local/bin/lab
 ln -sf "$DIR/bin/lab" /usr/bin/lab
 ln -sf "$DIR/bin/lab-bmc" /usr/local/bin/lab-bmc
@@ -46,6 +46,7 @@ cat > /etc/motd <<'EOF'
 
   lab neu        neues Ticket          lab server     Server & BMC-Adressen
   lab ticket     Ticket anzeigen       lab login gpu01  auf einen Server
+  lab stick gpu01  AI-PE-Stick stecken  lab tipp       Hinweis (kostet Punkte)
   lab pruefen    Zwischenstand         lab abschluss  Ticket abmelden
   lab hilfe      alle Befehle          lab update     Lab aktualisieren
 
