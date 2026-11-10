@@ -56,34 +56,40 @@ def idl(s):
         typ, sev, tipp = "SYSTEM", "Info", "No action required."
         if "Uncorrectable ECC" in ev:
             typ, sev = "MEMORY", "Critical"
-            tipp = (f"Uncorrectable memory error on {sensor.replace('DIMM_', '')}. Replace the DIMM in this slot "
-                    "(power off first). After replacement clear SEL/IDL and verify no new errors.")
+            tipp = (f"Uncorrectable ECC on {sensor}. Inspur flow: 1) server off (customer), reseat the DIMM – alarm gone? "
+                    "2) replace the DIMM – alarm gone? 3) otherwise GS. Check the slot name twice.")
+        elif "Memory Device Disabled" in ev:
+            typ, sev = "MEMORY", "Warning"
+            tipp = f"{sensor} was disabled by BIOS during POST. The module is not in use – reseat, if it stays disabled replace it."
         elif "Correctable ECC" in ev:
             typ, sev = "MEMORY", "Warning"
-            tipp = "Correctable errors. Monitor; if errors keep increasing or an uncorrectable error follows, replace the DIMM."
-        elif "CATERR" in sensor:
+            tipp = "Correctable errors. Monitor; if they keep increasing or an uncorrectable error follows, follow the DIMM flow."
+        elif "CATERR" in sensor or "IERR" in ev:
             typ, sev = "PROCESSOR", "Critical"
-            tipp = "Catastrophic error. Check IDL entries just before this event (memory, PCIe) to find the root cause."
+            tipp = "CATERR/IERR. Check the IDL entries just before (memory, PCIe) – often the CPU is not the root cause."
+        elif sensor.startswith("PSU") and "AC lost" in ev:
+            typ, sev = "POWER SUPPLY", "Critical"
+            tipp = f"{sensor.split('_')[0]} input lost. Check power cord and PDU first – often not a PSU defect."
         elif sensor.startswith("PSU") and "Failure" in ev:
             typ, sev = "POWER SUPPLY", "Critical"
-            tipp = f"{sensor.split('_')[0]} failed. Check AC input cable; if OK, replace the PSU (hot-swap)."
+            tipp = f"{sensor.split('_')[0]} failure. Check seat/contact in the slot, then replace the PSU (hot-swap)."
         elif "Redundancy Lost" in ev:
             typ, sev = "POWER SUPPLY", "Warning"
-            tipp = "Power redundancy lost. Find the failed PSU in this log and replace it."
+            tipp = "Power redundancy lost. Find the affected PSU in this log."
         elif sensor.startswith("FAN"):
             typ, sev = "FAN", "Critical"
             tipp = f"{sensor.split('_')[0]} below lower critical threshold. Reseat or replace the fan module (hot-swap)."
         elif sensor.startswith("PCIe_GPU"):
             typ, sev = "PCIE", "Critical"
             n = sensor.replace("PCIe_GPU", "")
-            tipp = (f"PCIe uncorrectable error on GPU slot {n}. Check if the GPU is still visible in the OS "
-                    "(nvidia-smi / lspci). Reseat or replace the GPU, then run fieldiag.")
-        elif "Drive Fault" in ev:
+            tipp = (f"PCIe error on GPU slot {n} (BDF {core.GPU_BUS[int(n)]}:00.0). Inspur flow: 1) check power, reseat the card – "
+                    "alarm gone? 2) replace the card – alarm gone? 3) mainboard/GPU board 4) GS. Afterwards fieldiag.")
+        elif "Drive" in ev and "Fault" in ev:
             typ, sev = "STORAGE", "Critical"
-            tipp = "Drive reported a fault. Replace the drive (hot-swap) and check the rebuild status."
+            tipp = "Hard disk detected fault. Compare slot AND disk SN with the ticket – if they do not match, stop and escalate."
         elif "Rebuild" in ev:
             typ = "STORAGE"
-        elif "boot" in ev.lower() or "System_FW" in sensor:
+        elif "SysRestart" in sensor or "boot" in ev.lower() or "BIOS_Boot" in sensor:
             typ = "SYS RESTART"
         elif "ACPI" in sensor:
             typ = "ACPI STATUS"
@@ -144,19 +150,38 @@ def alarme(s):
     return a
 
 
+def analy_process(s):
+    """M6/M7: Register-Auswertung mit Tauschempfehlung (wie AnalyProcess.log)."""
+    z = [f"[{datetime.now():%Y-%m-%d %H:%M:%S}] AnalyProcess start (Lab-Simulation)"]
+    for d in s["comp"]["dimm"]:
+        if d["status"] == "ue":
+            z += ["The first fault source is Memory.", f"Replace Memory device location: {d['name']}"]
+    if any(e["sensor"] == "CPU_CATERR" for e in s["sel"]) and not any(d["status"] == "ue" for d in s["comp"]["dimm"]):
+        z.append("The first fault source CPU is CPU0 (no memory fault found).")
+    for i, g in enumerate(s["comp"]["gpu"]):
+        if g["status"] == "offbus":
+            z.append(f"PCIe root port {core.GPU_BUS[i]}: Surprise Down / Uncorrectable – device GPU{i} (BDF {core.GPU_BUS[i]}:00.0)")
+    if len(z) == 1:
+        z.append("No fault source found.")
+    return "\n".join(z)
+
+
 def onekey(s, st):
-    """One-key Collection Log als tar.gz"""
+    """One-key Collection Log als tar.gz (Aufbau wie beim echten Onekey-Log, Inhalt simuliert)."""
     teile = {
-        "sel.txt": "\n".join(f"{e['id']:>4} | {core.ts(e['t'])} | {e['typ']} {e['sensor']} | {e['event']} | {e['dir']}" for e in s["sel"]),
-        "idl.txt": "\n".join(f"{x['id']:>4} {x['zeit']} {x['sev']:<8} {x['typ']:<14} {x['code']} {x['desc']}" for x in idl(s)),
-        "sensors.txt": "\n".join(f"{n:<18}| {w} {e} | {stt}" for n, w, e, stt in core.sensoren(s)),
-        "fru.txt": f"Product: {s['modell']}\nSerial: {s['sn']}\n" + "\n".join(
-            f"{k.upper()}{i}: {d.get('name', '')} SN {d['sn']} status {d['status']}"
-            for k, l in s["comp"].items() for i, d in enumerate(l)),
-        "firmware.txt": "\n".join(f"{k}: {v}" for k, v in s["fw"].items()),
-        "audit.txt": "\n".join(f"{core.ts(a['t'])} {a['user']} {a['quelle']} {a['aktion']}" for a in s.get("audit", [])),
-        "README.txt": "One-key Collection Log (Lab-Simulation). Echte BMCs packen hier deutlich mehr hinein\n"
-                      "(BMC-Logs, Crash-Dumps, Register). Diese Datei wird beim Kunden-Ticket oft angefordert.",
+        "log/selelist.csv": "ID,Date,Time,Sensor Type,Sensor,Event,Direction\n" + "\n".join(
+            f"{e['id']},{core.ts(e['t']).replace(' | ', ',')},{e['typ']},{e['sensor']},{e['event']},{e['dir']}" for e in s["sel"]),
+        "log/idl.log": "\n".join(f"{x['id']:>4} {x['zeit']} {x['sev']:<8} {x['typ']:<14} {x['code']} {x['desc']}" for x in idl(s)),
+        "log/audit.log": "\n".join(f"{core.ts(a['t'])} {a['user']} {a['quelle']} {a['aktion']}" for a in s.get("audit", [])),
+        "log/psuFaultHistory.log": "\n".join(f"PSU{i} SN {p['sn']} status {p['status']}" for i, p in enumerate(s["comp"]["psu"])),
+        "component.log": "\n".join(f"{k} Version: {v}" for k, v in s["fw"].items()) + "\n\n" + "\n".join(
+            f"{k.upper()}{i}: {d.get('name', '')} SN {d['sn']} status {d['status']}" for k, l in s["comp"].items() for i, d in enumerate(l)),
+        "AnalyProcess.log": analy_process(s),
+        "rundatainfo.log": "\n".join(f"{n:<18}| {w} {e} | {stt}" for n, w, e, stt in core.sensoren(s)),
+        "sollog/solHostCaptured.log": "(Lab) Serial-over-LAN capture",
+        "README.txt": "One-key Collection Log (Lab-Simulation). Wichtig: log/idl.log (Warning/Critical), log/audit.log\n"
+                      "(wer hat aus/neu gestartet), component.log (Versionen), AnalyProcess.log (Tauschempfehlung),\n"
+                      "rundatainfo.log (Sensoren).",
     }
     puffer = io.BytesIO()
     with tarfile.open(fileobj=puffer, mode="w:gz") as tar:

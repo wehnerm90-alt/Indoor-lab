@@ -113,7 +113,7 @@ const MENU = [
   ['power', '&#9211;', 'Power Supply', [['powerctl','Power Control'],['psu','Power Supply Info'],['powercap','Power Capping']]],
   ['fan', '&#10051;', 'Fan Settings'],
   ['bmcset', '&#9881;', 'BMC Settings', [['network','Network'],['services','Services'],['ntp','Date & Time (NTP)'],['users','User Management'],['boot','BIOS Boot Options']]],
-  ['maint', '&#128295;', 'Maintenance', [['fwupdate','Firmware Update'],['factory','Restore Factory Defaults'],['bmcreboot','BMC Reboot']]],
+  ['maint', '&#128295;', 'Maintenance', [['fwupdate','HPM Firmware Update'],['factory','Restore Factory Defaults'],['bmcreboot','BMC Reboot']]],
 ];
 const TITLES = {summary:['System Summary','Overview'], sysinfo:['System Information','Host'], fru:['FRU','Field Replaceable Units'], hw:['Hardware','Inventory'],
   fwinfo:['Firmware','Information'], storage:['Storage','Drives & Controllers'], kvm:['Remote Console','H5Viewer'], vmedia:['Virtual Media','Image Redirection'],
@@ -121,7 +121,7 @@ const TITLES = {summary:['System Summary','Overview'], sysinfo:['System Informat
   audit:['Audit Log','User Operations'], logset:['Log Settings','Policy'], snmptrap:['SNMP Trap','Settings'], snmpsg:['SNMP Set/Get','Settings'], mail:['Mail Alarm','SMTP'],
   sensor:['Sensor','Readings'], powerctl:['Power Control','Host'], psu:['Power Supply','Information'], powercap:['Power Capping','Policy'], fan:['Fan Settings','Control Mode'],
   network:['Network','BMC Interface'], services:['Services','Ports'], ntp:['Date & Time','NTP'], users:['User Management','Accounts'], boot:['BIOS Boot Options','Next Boot'],
-  fwupdate:['Firmware Update','BMC / BIOS'], factory:['Factory Defaults','Restore'], bmcreboot:['BMC Reboot','Maintenance']};
+  fwupdate:['HPM Firmware Update','BMC / BIOS / CPLD'], factory:['Factory Defaults','Restore'], bmcreboot:['BMC Reboot','Maintenance']};
 const FORMS = {
   network: [['hostname','Hostname','text'],['mode','IP Source','select',['Static','DHCP']],['ip','IPv4 Address','text'],['netmask','Subnet Mask','text'],['gateway','Default Gateway','text'],['dns','DNS Server','text'],['ncsi','NCSI Mode','select',['Dedicated','Shared (OCP)','Shared (LOM)']],['vlan','VLAN Enable','bool'],['vlan_id','VLAN ID','number']],
   services: [['web','Web Service','bool'],['web_port','Web Port','number'],['kvm','KVM Service','bool'],['kvm_port','KVM Port','number'],['ssh','SSH','bool'],['ssh_port','SSH Port','number'],['ipmi','IPMI over LAN','bool'],['ipmi_port','IPMI Port','number'],['snmp','SNMP','bool'],['snmp_port','SNMP Port','number'],['redfish','Redfish','bool']],
@@ -130,7 +130,7 @@ const FORMS = {
   snmp_trap: [['enable','SNMP Trap Enable','bool'],['version','Version','select',['v1','v2c','v3']],['community','Community','text'],['dest1','Destination 1','text'],['dest2','Destination 2','text']],
   snmp_setget: [['v2c','SNMPv1/v2c Enable','bool'],['ro_community','Read Community','text'],['v3','SNMPv3 Enable','bool'],['v3_user','SNMPv3 User','text']],
   log: [['sel_policy','SEL Full Policy','select',['Circular','Linear']],['audit','Audit Log Enable','bool'],['syslog','Remote Syslog','bool'],['syslog_server','Syslog Server','text'],['syslog_port','Syslog Port','number']],
-  boot: [['mode','Boot Mode','select',['UEFI','Legacy']],['device','Boot Device','select',['Hard Disk','PXE','USB','CD/DVD','BIOS Setup']],['persist','Effective','select',['Once','Permanent']]],
+  boot: [['device','Boot Device','select',['Hard Disk','PXE','USB','CD/DVD','BIOS Setup']],['persist','Effective','select',['Once','Permanent']]],
   powercap: [['enable','Power Capping Enable','bool'],['limit','Power Limit (W)','number']],
   fan: [['mode','Fan Control Mode','select',['Auto','Manual']],['duty','Manual Duty Cycle (%)','number']],
 };
@@ -153,7 +153,7 @@ async function load() {
   if (c === 401) { $('#app').style.display = 'none'; $('#login').style.display = 'flex'; return false; }
   D = j; return true;
 }
-async function start() { if (await load()) { $('#login').style.display = 'none'; $('#app').style.display = 'block'; buildMenu(); render(); } }
+async function start() { if (await load()) { $('#login').style.display = 'none'; $('#app').style.display = 'block'; buildMenu(); render(); seen(page); } }
 async function refresh() { await load(); render(); }
 
 function buildMenu() {
@@ -171,7 +171,8 @@ function markMenu() {
   document.querySelectorAll('[data-p]').forEach(e => e.classList.toggle('on', e.dataset.p === page));
   for (const [id, , , subs] of MENU) if (subs && subs.some(s => s[0] === page)) { $('#sub_' + id).classList.add('open'); document.querySelector(`[data-g="${id}"]`).classList.add('open'); }
 }
-function go(p) { page = p; msg = null; markMenu(); render(); }
+function go(p) { page = p; msg = null; markMenu(); render(); seen(p); }
+function seen(p) { const w = {summary:'fw', fwinfo:'fw', fwupdate:'fw', fru:'fru'}[p]; if (w) post('/api/seen', {what: w}); }
 function head(p) {
   const [t, s] = TITLES[p] || [p, ''];
   return `<div class="ph"><h1>${t}</h1><small>${s}</small><span class="q" title="Lab-Simulation">?</span><div class="bc">&#8962; Home<span>&gt;</span>${t}</div></div>` +
@@ -205,7 +206,7 @@ function render() {
       <tr><td>Product</td><td>${esc(D.modell)}</td></tr><tr><td>Serial Number</td><td>${esc(D.sn)}</td></tr>
       <tr><td>Processors</td><td>2 x Intel Xeon Platinum 8480+ (Lab)</td></tr><tr><td>Memory</td><td>${k.dimm.filter(d=>d.status==='ok').length * 64} GB (${k.dimm.length} slots)</td></tr>
       <tr><td>GPUs</td><td>${k.gpu.length || '–'}</td></tr><tr><td>Power Supplies</td><td>${k.psu.length}</td></tr><tr><td>Fans</td><td>${k.fan.length}</td></tr>
-      <tr><td>Boot Mode</td><td>${esc(S.boot.mode)}</td></tr></table></div>`;
+      </table></div>`;
   } else if (p === 'fru') {
     m.innerHTML = head(p) + `<div class="panel"><h3>Builtin FRU Device (ID 0)</h3><table>
       <tr><td>Board Manufacturer</td><td>Inspur (Lab)</td></tr><tr><td>Board Product</td><td>${esc(D.modell)}</td></tr><tr><td>Product Serial</td><td>${esc(D.sn)}</td></tr></table></div>` +
@@ -226,7 +227,7 @@ function render() {
     m.innerHTML = head(p) + `<div class="panel"><p>Opens the host console in a new window (BIOS POST while booting, Linux console afterwards – login <b>root</b>, any password).</p>
       <button class="btn" onclick="window.open('/kvm','kvm_'+D.name,'width=1040,height=700')">Launch H5Viewer</button></div>`;
   } else if (p === 'vmedia') {
-    m.innerHTML = head(p) + `<div class="panel"><div class="form"><label>Image URL (NFS/CIFS/HTTP)</label><input type="text" id="vm" value="${esc(S.vmedia.image)}" placeholder="http://server/ubuntu.iso">
+    m.innerHTML = head(p) + `<div class="panel"><div class="form"><label>Image URL (NFS/CIFS/HTTP) – z. B. http://depot/ai-easycfg-uefi.iso</label><input type="text" id="vm" value="${esc(S.vmedia.image)}" placeholder="http://server/ubuntu.iso">
       <label>Status</label><div>${S.vmedia.mounted ? '<span class=ok>Mounted</span>' : 'Not mounted'}</div></div><div class="right">
       <button class="btn" onclick="saveSet('vmedia',{image:$('#vm').value,mounted:true})">Mount</button><button class="btn gray" onclick="saveSet('vmedia',{mounted:false})">Unmount</button></div></div>`;
   } else if (p === 'uid') {

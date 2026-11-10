@@ -13,24 +13,28 @@ import secrets
 import shlex
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime
 
 from . import core
 
 INBAND = os.path.join(core.BASE, "bin", "inband")
-TOOLS = {"nvidia-smi", "fieldiag", "dmesg", "lspci", "nvme", "storcli64", "ipmitool"}
+PE_BIN = os.path.join(core.BASE, "bin", "pe")
+TOOLS = {"nvidia-smi", "dmesg", "lspci", "nvme", "storcli64", "ipmitool"}
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 SITZUNGEN = {}
+FS_STORE = {}   # (server, boot_id, os) -> Aenderungen am Dateisystem (gehen beim Neustart verloren)
+PAKETE = {m["fd_paket"]: m for m in core.MODELS.values() if m["fd_paket"]}
 
-BEFEHLE = sorted({
+BEFEHLE = sorted({"chmod", "tar", "rmmod", "modprobe", "lsof", "kill", "sh", "bash", "mount", "lsusb", "dcgmi",
     "cd", "pwd", "ls", "ll", "cat", "head", "tail", "less", "more", "grep", "egrep", "wc", "sort", "uniq", "echo",
     "touch", "mkdir", "rm", "rmdir", "cp", "mv", "clear", "history", "whoami", "id", "hostname", "uname", "uptime",
     "date", "free", "df", "lsblk", "ip", "lscpu", "dmidecode", "journalctl", "smartctl", "top", "ps", "which",
     "type", "man", "sudo", "env", "printenv", "export", "alias", "exit", "logout", "reboot", "poweroff", "shutdown",
     "halt", "init", "sleep", "true", "false", "systemctl", "lsmod", "ping", "vi", "vim", "nano", "sensors",
     "nvidia-bug-report.sh", "help", "tee", "find", "basename", "dirname", "stat", "file", "sync", "lspci",
-} | TOOLS | {"fieldiag.sh"})
+} | TOOLS)
 
 
 class Fehler(Exception):
@@ -45,6 +49,7 @@ def tool(name, prog, args):
     pfad = os.path.join(INBAND, prog) if prog != "ipmitool" else os.path.join(core.BASE, "bin", "ipmitool")
     env = dict(os.environ, LAB_SERVER=name, PYTHONIOENCODING="utf-8",
                PATH=INBAND + ":" + os.environ.get("PATH", "/usr/bin:/bin"))
+    env.pop("LAB_FAST", None) if not core.FAST else None
     try:
         r = subprocess.run([sys.executable, pfad, *args], env=env, capture_output=True, text=True, timeout=240)
     except subprocess.TimeoutExpired:
@@ -58,27 +63,51 @@ def tool(name, prog, args):
 # Virtuelles Dateisystem
 # --------------------------------------------------------------------------
 
+def _fd_logs(sh, paketdir):
+    f = {}
+    ordner = os.path.join(core.VAR, "fieldiag", sh.name)
+    if os.path.isdir(ordner):
+        for name in sorted(os.listdir(ordner)):
+            pfad = os.path.join(ordner, name)
+            if os.path.getmtime(pfad) >= sh.boot_zeit - 1:
+                f[f"{paketdir}/logs/{name}"] = (lambda p=pfad: open(p, encoding="utf-8").read())
+    return f
+
+
+def paket_dateien(paket):
+    m = PAKETE[paket]
+    return {
+        "fieldiag.sh": "#!/bin/bash\n# NVIDIA Field Diagnostic launcher\n./fieldiag \"$@\"\n",
+        "fieldiag": "\x7fELF (binary)",
+        "README.txt": (f"NVIDIA Field Diagnostic {paket}\nSupported SKU: {m['fd_sku']}\n\n"
+                       "Usage:\n  ./fieldiag.sh --no_bmc --level1     quick test\n  ./fieldiag.sh --no_bmc --level2     full test\n"
+                       "  ./fieldiag.sh --no_bmc --test gpumem\n  ./fieldiag.sh --no_bmc --test skucheck\n\n"
+                       "Before running: VT-d/IOMMU off, SR-IOV on, MIG off, NVIDIA driver unloaded.\n"
+                       "All GPUs must have the same VBIOS version (skucheck aborts otherwise).\n"),
+        f"testargs_{'hgx-a100-8-gpu' if m['typ'] == 'hgx' else 'a30-pcie'}.json": '{\n  "test_args": {"nvlink_lanes": 4, "pcie_width": 16}\n}\n',
+        "spec_" + paket.split("-FLD-")[1] + ".json": '{ "sku": "' + m["fd_sku"] + '" }\n',
+    }
+
+
 def basis_dateien(sh):
     s = core.lesen()["servers"][sh.name]
     m = core.MODELS[s["modell"]]
-    n = sh.name
+    n = sh.hostname
     ram_gb = sum(1 for d in s["comp"]["dimm"] if d["status"] == "ok") * 64
+    pe = sh.os == "pe"
     f = {
         "/etc/hostname": n + "\n",
-        "/etc/os-release": 'PRETTY_NAME="Ubuntu 24.04 LTS"\nNAME="Ubuntu"\nVERSION_ID="24.04"\nVERSION="24.04 LTS (Noble Numbat)"\nID=ubuntu\n',
+        "/etc/os-release": ('PRETTY_NAME="AI PE (Ubuntu 22.04.3 LTS based live system)"\nNAME="AI PE"\nVERSION_ID="22.04"\n' if pe else
+                            'PRETTY_NAME="Ubuntu 24.04 LTS"\nNAME="Ubuntu"\nVERSION_ID="24.04"\nVERSION="24.04 LTS (Noble Numbat)"\nID=ubuntu\n'),
         "/etc/hosts": f"127.0.0.1 localhost\n127.0.1.1 {n}\n",
-        "/etc/fstab": "/dev/disk/by-uuid/4f2c1e0a / ext4 defaults 0 1\n/swap.img none swap sw 0 0\n",
         "/proc/version": "Linux version 6.8.0-45-generic (buildd@lcy02-amd64) (gcc 13.2.0) #45-Ubuntu SMP\n",
-        "/proc/cpuinfo": "".join(f"processor\t: {i}\nvendor_id\t: GenuineIntel\nmodel name\t: Intel(R) Xeon(R) Platinum 8480+\n"
-                                  f"physical id\t: {i // 56}\ncpu cores\t: 56\n\n" for i in range(4)) + "(... 224 processors, gekürzt)\n",
-        "/proc/meminfo": f"MemTotal:       {ram_gb * 1024 * 1024} kB\nMemFree:        {ram_gb * 1024 * 1000} kB\nMemAvailable:   {ram_gb * 1024 * 1010} kB\n",
+        "/proc/cpuinfo": "".join(f"processor\t: {i}\nvendor_id\t: GenuineIntel\nmodel name\t: Intel(R) Xeon(R) Platinum 8358 CPU @ 2.60GHz\n"
+                                  f"physical id\t: {i // 32}\ncpu cores\t: 32\n\n" for i in range(4)) + "(... 128 processors, gekürzt)\n",
+        "/proc/meminfo": f"MemTotal:       {ram_gb * 1024 * 1024} kB\nMemFree:        {ram_gb * 1024 * 1000} kB\n",
         "/root/.bashrc": "# ~/.bashrc\nalias ll='ls -alF'\n",
-        "/root/.bash_history": "",
         "/var/log/syslog": lambda: syslog(sh),
         "/var/log/kern.log": lambda: tool(sh.name, "dmesg", [])[0],
-        "/var/log/dmesg": lambda: tool(sh.name, "dmesg", [])[0],
-        "/dev/ipmi0": "",
-        "/dev/null": "",
+        "/dev/ipmi0": "", "/dev/null": "",
     }
     for i, d in enumerate(s["comp"]["nvme"]):
         if d["status"] == "ok":
@@ -86,22 +115,36 @@ def basis_dateien(sh):
             f[f"/dev/nvme{i}n1"] = ""
     if s["comp"]["hdd"]:
         f["/dev/sda"] = ""
-        f["/dev/sda1"] = ""
-    for i, g in enumerate(s["comp"]["gpu"]):
-        if g["status"] != "offbus":
-            f[f"/dev/nvidia{i}"] = ""
-    if s["comp"]["gpu"]:
-        f["/dev/nvidiactl"] = ""
-        f["/root/fieldiag/fieldiag.sh"] = "#!/bin/bash\n# fieldiag launcher (Lab)\nexec fieldiag \"$@\"\n"
-        f["/root/fieldiag/README.txt"] = ("fieldiag (Lab-Simulation)\n  ./fieldiag.sh --level1   kurzer Test\n"
-                                          "  ./fieldiag.sh --level2   ausführlicher Test\n  --no_bmc   BMC-Sensoren auslassen\n"
-                                          "Logs: /root/fieldiag/logs/\n")
-        logdir = os.path.join(core.VAR, "fieldiag")
-        if os.path.isdir(logdir):
-            for name in sorted(os.listdir(logdir)):
-                if name.startswith(f"fieldiag_{n}_"):
-                    pfad = os.path.join(logdir, name)
-                    f[f"/root/fieldiag/logs/{name}"] = (lambda p=pfad: open(p, encoding="utf-8").read())
+    if s.get("drv", True):
+        from .tools import sichtbar
+        for i in range(len(s["comp"]["gpu"])):
+            if sichtbar(s, i) == "ok":
+                f[f"/dev/nvidia{i}"] = ""
+        if s["comp"]["gpu"]:
+            f["/dev/nvidiactl"] = ""
+    if pe:
+        f["/dev/sdb"] = ""
+        f["/dev/sdb1"] = ""
+        f["/iei/README.txt"] = ("AI PE Testtools (Lab)\n  AI-EasyCfg/   chmod -R +x AI-EasyCfg/ ; cd AI-EasyCfg/ ; ./ai-easyCfg\n"
+                                "  nvflash/      ./nvflash.sh --version | -i <n> --save <file.rom> | -i <n> <file.rom>\n"
+                                "fieldiag-Paket vom Stick (/media) nach /inspur kopieren, dort entpacken.\n")
+        f["/iei/AI-EasyCfg/ai-easyCfg"] = "#!/bin/bash (AI-EasyCfg)"
+        f["/iei/AI-EasyCfg/README.txt"] = ("AI-EasyCfg V2.2 (Lab)\n 2 Log collection   6 fieldiag   21 unload driver   23 reinstall driver\n"
+                                           " 24/25 BMC polling off/on (NF5488M6/NF5688M6/NF5688LM6)   29 GPU write protection\n")
+        f["/iei/AI-EasyCfg/config/models.cfg"] = "NF5488M6\nNF5688M6\nNF5688LM6\nNF5488A5\n"
+        f["/iei/nvflash/nvflash.sh"] = "#!/bin/bash\n./nvflash \"$@\"\n"
+        f["/iei/nvflash/nvflash"] = "\x7fELF (binary)"
+        for paket in PAKETE:
+            f[f"/media/{paket}.tgz"] = f"\x1f\x8b\x08 TGZ:{paket} (gzip compressed data)"
+        f["/media/README_Stick.txt"] = "NTFS-Datenpartition des AI-PE-Sticks. fieldiag-Pakete fuer HGX A100 und A30 PCIe.\n"
+    else:
+        f["/root/.bash_history"] = ""
+        f["/home/svc_ops/.ssh/authorized_keys"] = "(Kunde)"
+        f["/opt/customer/README"] = "Produktivsystem des Kunden. Keine Software installieren oder Daten verändern.\n"
+    for d, paket in sh.fs["pakete"].items():
+        for name, inhalt in paket_dateien(paket).items():
+            f[f"{d}/{name}"] = inhalt
+        f.update(_fd_logs(sh, d))
     return f
 
 
@@ -112,30 +155,55 @@ def syslog(sh):
     for z in out.splitlines():
         m = re.match(r"\[\s*([\d.]+)\]\s*(.*)", z)
         if m:
-            zeilen.append(f"{basis} {sh.name} kernel: [{m.group(1)}] {m.group(2)}")
-    zeilen.append(f"{basis} {sh.name} systemd[1]: Started nvidia-persistenced.service - NVIDIA Persistence Daemon.")
+            zeilen.append(f"{basis} {sh.hostname} kernel: [{m.group(1)}] {m.group(2)}")
+    zeilen.append(f"{basis} {sh.hostname} systemd[1]: Started nvidia-persistenced.service - NVIDIA Persistence Daemon.")
     return "\n".join(zeilen) + "\n"
 
 
-STANDARD_DIRS = ["/", "/bin", "/boot", "/dev", "/etc", "/home", "/lib", "/opt", "/proc", "/root", "/root/fieldiag",
-                 "/root/fieldiag/logs", "/run", "/sbin", "/srv", "/sys", "/tmp", "/usr", "/usr/bin", "/usr/lib",
-                 "/usr/local", "/usr/sbin", "/var", "/var/log", "/var/tmp"]
+DIRS_GEMEINSAM = ["/", "/bin", "/boot", "/dev", "/etc", "/home", "/lib", "/opt", "/proc", "/root", "/run", "/sbin",
+                  "/sys", "/tmp", "/usr", "/usr/bin", "/usr/lib", "/usr/local", "/usr/sbin", "/var", "/var/log", "/var/tmp"]
+DIRS_PE = ["/iei", "/inspur", "/media", "/var/diags"]
+EXEC_BASIS = {"/iei/nvflash/nvflash.sh", "/iei/nvflash/nvflash"}
 
 
 class VShell:
     def __init__(self, name):
         self.name = name
+        st = core.lesen()
+        s = st["servers"][name]
+        self.os = s.get("os", "prod")
+        self.boot_id = s.get("boot_id", 1)
+        self.boot_zeit = s.get("power_since", time.time())
+        self.hostname = "localhost" if self.os == "pe" else name
+        key = (name, self.boot_id, self.os)
+        self.fs = FS_STORE.setdefault(key, {"neu": {}, "dirs": set(), "weg": set(), "exec": set(EXEC_BASIS), "pakete": {}})
         self.cwd = "/root"
-        self.env = {"HOME": "/root", "USER": "root", "LOGNAME": "root", "HOSTNAME": name, "SHELL": "/bin/bash",
-                    "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "TERM": "xterm",
-                    "LANG": "C.UTF-8"}
+        self.env = {"HOME": "/root", "USER": "root", "LOGNAME": "root", "HOSTNAME": self.hostname, "SHELL": "/bin/bash",
+                    "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "TERM": "xterm", "LANG": "C.UTF-8"}
         self.rc = 0
         self.hist = []
-        self.neu = {}        # vom Nutzer angelegte Dateien
-        self.neu_dirs = set()
-        self.weg = set()     # geloeschte Pfade
         self.t = time.time()
-        self.start = time.time()
+        self.startzeit = time.time()
+        # Ausfuehrung (laeuft im Hintergrund, Ausgabe wird abgeholt)
+        self.puffer = ""
+        self.laeuft = False
+        self.aktion = None
+        self.dialog = None      # (prompt, funktion) fuer interaktive Programme
+        self.proc = None
+        self.abbruch = False
+        self.lock = threading.Lock()
+
+    @property
+    def neu(self):
+        return self.fs["neu"]
+
+    @property
+    def neu_dirs(self):
+        return self.fs["dirs"]
+
+    @property
+    def weg(self):
+        return self.fs["weg"]
 
     # ---------------- Dateisystem ----------------
     def dateien(self):
@@ -148,9 +216,10 @@ class VShell:
 
     def verzeichnisse(self, dateien=None):
         dateien = dateien if dateien is not None else self.dateien()
-        d = set(STANDARD_DIRS) | self.neu_dirs
-        if not core.lesen()["servers"][self.name]["comp"]["gpu"]:
-            d -= {"/root/fieldiag", "/root/fieldiag/logs"}
+        d = set(DIRS_GEMEINSAM) | self.neu_dirs | (set(DIRS_PE) if self.os == "pe" else set())
+        for x in self.fs["pakete"]:
+            d.add(x)
+            d.add(x + "/logs")
         for p in dateien:
             teile = p.split("/")
             for i in range(1, len(teile)):
@@ -211,13 +280,54 @@ class VShell:
         c = self.cwd
         if c == "/root" or c.startswith("/root/"):
             c = "~" + c[5:]
-        return f"root@{self.name}:{c}# "
+        if self.dialog:
+            return self.dialog[0]
+        return f"root@{self.hostname}:{c}# "
+
+    # ---------------- Hintergrund-Ausfuehrung (fuer die KVM-Konsole) ----------------
+    def schreibe(self, text):
+        if text:
+            with self.lock:
+                self.puffer += text if text.endswith("\n") else text + "\n"
+
+    def start(self, zeile):
+        if self.laeuft:
+            return False
+        self.laeuft, self.aktion, self.abbruch = True, None, False
+        threading.Thread(target=self._lauf, args=(zeile,), daemon=True).start()
+        return True
+
+    def _lauf(self, zeile):
+        try:
+            if self.dialog:
+                prompt, fn = self.dialog
+                weiter = fn(zeile.strip())
+                if weiter:
+                    self.ausfuehren(weiter, verlauf=False)
+            else:
+                self.ausfuehren(zeile)
+        except Exception as e:  # noqa: BLE001
+            self.schreibe(f"-bash: interner Fehler: {e}")
+        finally:
+            self.laeuft = False
+
+    def unterbrechen(self):
+        self.abbruch = True
+        if self.proc and self.proc.poll() is None:
+            self.proc.terminate()
+        if self.dialog:
+            self.dialog = None
+            self.schreibe("^C")
+
+    def abholen(self, pos):
+        with self.lock:
+            return self.puffer[pos:], len(self.puffer)
 
     # ---------------- Ausfuehrung ----------------
-    def ausfuehren(self, zeile):
-        """-> (ausgabe, aktion)"""
+    def ausfuehren(self, zeile, verlauf=True):
+        """-> (ausgabe, aktion); die Ausgabe wird zusaetzlich laufend in den Puffer geschrieben."""
         self.t = time.time()
-        if zeile.strip():
+        if zeile.strip() and verlauf:
             self.hist.append(zeile)
         zeile = self._expand(zeile.strip())
         if not zeile or zeile.startswith("#"):
@@ -252,8 +362,12 @@ class VShell:
             out, akt = self._pipeline(teil)
             if out:
                 ausgabe.append(out.rstrip("\n"))
+                self.schreibe(out.rstrip("\n"))
             if akt:
                 aktion = akt
+                self.aktion = akt
+                break
+            if self.abbruch:
                 break
         return "\n".join(ausgabe), aktion
 
@@ -280,6 +394,7 @@ class VShell:
             self.rc = 2
             return "-bash: syntax error near unexpected token `|'", None
         stdin, fehler_out = "", []
+        self.stream = len(stufen) == 1 and not any(t in (">", ">>", "&>") for t in stufen[0])
         for i, st in enumerate(stufen):
             argv, ziel, anhaengen, err_mit, err_weg = [], None, False, False, False
             j = 0
@@ -357,10 +472,12 @@ class VShell:
             k, v = prog.split("=", 1)
             self.env[k] = v
             return "", "", 0, None
-        if prog in ("./fieldiag.sh", "fieldiag.sh", "/root/fieldiag/fieldiag.sh"):
-            if prog.startswith("./") and self.pfad(prog) not in self.dateien():
-                return "", f"-bash: {prog}: No such file or directory\n", 127, None
-            prog = "fieldiag"
+        if prog in ("sh", "bash") and args and not args[0].startswith("-"):
+            return self._programm(self.pfad(args[0]), args[0], args[1:], stdin, ohne_x=True)
+        if "/" in prog:
+            return self._programm(self.pfad(prog), prog, args, stdin)
+        if "--help" in args and prog in BEFEHLE and prog not in TOOLS and prog not in ("ls", "grep"):
+            return f"Usage: {prog} [OPTION]... (Lab-Simulation: Kurzhilfe)\n", "", 0, None
         if prog == "ll":
             prog, args = "ls", ["-alF", *args]
         fn = getattr(self, "c_" + prog.replace("-", "_").replace(".", "_"), None)
@@ -375,18 +492,54 @@ class VShell:
                 return r or "", "", 0, None
         except Fehler as e:
             return "", str(e) + "\n", 1, None
-        if "/" in prog:
-            return "", f"-bash: {prog}: No such file or directory\n", 127, None
         return "", f"{prog}: command not found\n", 127, None
 
-    # ---------------- Befehle ----------------
-    def c_help(self, a, i):
-        return ("GNU bash, version 5.2.21(1)-release (x86_64-pc-linux-gnu) – Lab-Simulation\n"
-                "Diagnose: nvidia-smi, fieldiag (cd ~/fieldiag; ./fieldiag.sh --level2), dmesg, lspci, nvme, storcli64,\n"
-                "          ipmitool, journalctl, smartctl, systemctl, sensors, nvidia-bug-report.sh\n"
-                "System:   ls cd pwd cat less head tail grep wc sort uniq find echo free df lsblk ip lscpu dmidecode top ps\n"
-                "          uptime date uname hostname whoami id history env export which reboot poweroff\n")
+    # ---------------- Programme im Dateisystem (./fieldiag.sh, ./ai-easyCfg, ./nvflash.sh) ----------------
+    def _programm(self, pfad, wie, args, stdin, ohne_x=False):
+        dateien = self.dateien()
+        if pfad in self.verzeichnisse(dateien):
+            return "", f"-bash: {wie}: Is a directory\n", 126, None
+        if pfad not in dateien:
+            return "", f"-bash: {wie}: No such file or directory\n", 127, None
+        if not ohne_x and pfad not in self.fs["exec"]:
+            return "", f"-bash: {wie}: Permission denied\n", 126, None
+        d, name = posixpath.split(pfad)
+        if d in self.fs["pakete"] and name in ("fieldiag.sh", "fieldiag"):
+            return self._fieldiag(d, args)
+        if name in ("nvflash.sh", "nvflash"):
+            return self._viererpack(self._nvflash(args))
+        if name == "ai-easyCfg":
+            return self._viererpack(self._easycfg())
+        return "", "", 0, None
 
+    @staticmethod
+    def _viererpack(r):
+        if isinstance(r, str):
+            return r, "", 0, None
+        r = tuple(r)
+        return r + (0, None)[len(r) - 2:] if len(r) < 4 else r
+
+    def _fieldiag(self, paketdir, args):
+        if "-h" in args or "--help" in args:
+            from .tools import FD_HILFE
+            return FD_HILFE, "", 0, None
+        env = dict(os.environ, LAB_SERVER=self.name, PYTHONIOENCODING="utf-8", LAB_FD_PAKET=self.fs["pakete"][paketdir],
+                   LAB_FD_LOGDIR=paketdir + "/logs")
+        cmd = [sys.executable, os.path.join(PE_BIN, "fieldiag"), *args]
+        if not self.stream:
+            r = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=900)
+            return r.stdout, r.stderr, r.returncode, None
+        self.proc = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        for zeile in self.proc.stdout:
+            self.schreibe(zeile.rstrip("\n"))
+        rc = self.proc.wait()
+        self.proc = None
+        if self.abbruch:
+            self.schreibe("^C")
+            return "", "", 130, None
+        return "", "", rc, None
+
+    # ---------------- Befehle ----------------
     def c_true(self, a, i):
         return "", "", 0
 
@@ -444,9 +597,9 @@ class VShell:
                     groesse = 4096 if typ == "d" else (len(str(dateien.get(voll, ""))) if not callable(dateien.get(voll)) else 18734)
                     if voll.startswith("/dev/"):
                         groesse = 0
-                    rechte = "drwxr-xr-x" if typ == "d" else ("-rwxr-xr-x" if typ == "x" or n.endswith(".sh") else "-rw-r--r--")
+                    rechte = "drwxr-xr-x" if typ == "d" else ("-rwxr-xr-x" if typ == "x" or voll in self.fs["exec"] else "-rw-r--r--")
                     g = f"{groesse / 1024:.1f}K" if "h" in opts and groesse >= 1024 else str(groesse)
-                    zeit = datetime.fromtimestamp(self.start).strftime("%b %d %H:%M")
+                    zeit = datetime.fromtimestamp(self.startzeit).strftime("%b %d %H:%M")
                     out.append(f"{rechte} 1 root root {g:>6} {zeit} {n}{'/' if typ == 'd' and 'F' in opts else ''}")
             else:
                 if namen:
@@ -497,12 +650,26 @@ class VShell:
         return "\n".join(text.splitlines()[-n:]) + "\n" if text else ""
 
     def c_grep(self, a, i):
-        flags, rest = set(), []
-        for x in a:
-            if x.startswith("-") and len(x) > 1 and not rest:
+        flags, rest, ctx = set(), [], {"A": 0, "B": 0}
+        k = 0
+        while k < len(a):
+            x = a[k]
+            if x == "--help":
+                return ("Usage: grep [OPTION]... PATTERNS [FILE]...\nSearch for PATTERNS in each FILE.\n"
+                        "  -i  ignore case     -v  invert match    -n  line numbers   -c  count\n"
+                        "  -w  whole words     -E  extended regex  -A NUM / -B NUM / -C NUM  context lines\n")
+            m = re.fullmatch(r"-([ABC])(\d*)", x)
+            if m and not rest:
+                n = m.group(2) or (a[k + 1] if k + 1 < len(a) else "0")
+                if not m.group(2):
+                    k += 1
+                for c in ("AB" if m.group(1) == "C" else m.group(1)):
+                    ctx[c] = int(n) if n.isdigit() else 0
+            elif x.startswith("-") and len(x) > 1 and not rest:
                 flags.update(x[1:])
             else:
                 rest.append(x)
+            k += 1
         if not rest:
             return "", "Usage: grep [OPTION]... PATTERNS [FILE]...\nTry 'grep --help' for more information.\n", 2
         muster, dateien = rest[0], rest[1:]
@@ -511,25 +678,37 @@ class VShell:
                             re.I if "i" in flags else 0)
         except re.error:
             rx = re.compile(re.escape(muster), re.I if "i" in flags else 0)
-        quellen = []
-        err = []
+        quellen, err = [], []
         if dateien:
             for d in dateien:
                 try:
                     quellen.append((d, self.lesen(d, "grep")))
                 except Fehler as e:
-                    err.append(str(e).replace("grep: ", "grep: ", 1))
+                    err.append(str(e))
         else:
             quellen.append(("", i))
-        treffer = []
+        treffer, anzahl = [], 0
         for name, text in quellen:
-            for nr, z in enumerate(text.splitlines(), 1):
+            zeilen = text.splitlines()
+            hits = []
+            for nr, z in enumerate(zeilen):
                 hit = bool(rx.search(z)) if "w" not in flags else bool(re.search(rf"\b{rx.pattern}\b", z, rx.flags))
                 if hit != ("v" in flags):
-                    treffer.append(((name + ":") if len(quellen) > 1 else "") + (f"{nr}:" if "n" in flags else "") + z)
+                    hits.append(nr)
+            anzahl += len(hits)
+            zeigen = set()
+            for nr in hits:
+                zeigen.update(range(max(0, nr - ctx["B"]), min(len(zeilen), nr + ctx["A"] + 1)))
+            letzte = None
+            for nr in sorted(zeigen):
+                if letzte is not None and nr > letzte + 1 and (ctx["A"] or ctx["B"]):
+                    treffer.append("--")
+                vor = (name + (":" if nr in hits else "-")) if len(quellen) > 1 else ""
+                treffer.append(vor + (f"{nr + 1}{':' if nr in hits else '-'}" if "n" in flags else "") + zeilen[nr])
+                letzte = nr
         if "c" in flags:
-            return str(len(treffer)) + "\n", "\n".join(err), 0 if treffer else 1
-        return ("\n".join(treffer) + "\n" if treffer else ""), ("\n".join(err) + "\n" if err else ""), (0 if treffer else (2 if err else 1))
+            return str(anzahl) + "\n", "\n".join(err), 0 if anzahl else 1
+        return ("\n".join(treffer) + "\n" if treffer else ""), ("\n".join(err) + "\n" if err else ""), (0 if anzahl else (2 if err else 1))
 
     c_egrep = c_grep
 
@@ -686,12 +865,12 @@ class VShell:
         return "uid=0(root) gid=0(root) groups=0(root)\n"
 
     def c_hostname(self, a, i):
-        return self.name + "\n"
+        return self.hostname + "\n"
 
     def c_uname(self, a, i):
         if "-a" in a:
-            return f"Linux {self.name} 6.8.0-45-generic #45-Ubuntu SMP PREEMPT_DYNAMIC x86_64 x86_64 x86_64 GNU/Linux\n"
-        teile = {"-s": "Linux", "-n": self.name, "-r": "6.8.0-45-generic", "-m": "x86_64", "-o": "GNU/Linux"}
+            return f"Linux {self.hostname} 6.8.0-45-generic #45-Ubuntu SMP PREEMPT_DYNAMIC x86_64 x86_64 x86_64 GNU/Linux\n"
+        teile = {"-s": "Linux", "-n": self.hostname, "-r": "6.8.0-45-generic", "-m": "x86_64", "-o": "GNU/Linux"}
         out = [teile[x] for x in a if x in teile] or ["Linux"]
         return " ".join(out) + "\n"
 
@@ -802,13 +981,6 @@ class VShell:
                 "      1 root      20   0  168452  13212   0.0   0.0   0:09.73 systemd\n"
                 "(Lab: Momentaufnahme, interaktives top wird nicht nachgebildet)\n")
 
-    def c_ps(self, a, i):
-        return ("USER         PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND\n"
-                "root           1  0.0  0.0 168452 13212 ?        Ss   Nov08   0:09 /sbin/init\n"
-                "root        2214  0.7  0.0 305112 12304 ?        Ssl  Nov08   1:02 /usr/bin/nvidia-persistenced\n"
-                "root        2301  0.0  0.0  12204  7400 ?        Ss   Nov08   0:00 sshd: /usr/sbin/sshd -D\n"
-                f"root        9921  0.0  0.0   8796  5120 tty1     Ss   {datetime.now():%H:%M}   0:00 -bash\n")
-
     def c_which(self, a, i):
         out, rc = [], 0
         for x in a:
@@ -857,7 +1029,7 @@ class VShell:
     def _power(self, art, text):
         with core.zustand() as st:
             core.power(st, st["servers"][self.name], art)
-        return f"\nBroadcast message from root@{self.name} on pts/1:\n\nThe system will {text} now!\n", "", 0, "reboot" if art == "cycle" else "off"
+        return f"\nBroadcast message from root@{self.hostname} on pts/1:\n\nThe system will {text} now!\n", "", 0, "reboot" if art == "cycle" else "off"
 
     def c_reboot(self, a, i):
         return self._power("cycle", "reboot")
@@ -888,33 +1060,6 @@ class VShell:
 
     def c_sync(self, a, i):
         return ""
-
-    def c_systemctl(self, a, i):
-        s = core.lesen()["servers"][self.name]
-        dienst = next((x for x in a if not x.startswith("-") and x not in ("status", "restart", "start", "stop", "is-active")), "")
-        if "status" in a and dienst:
-            name = dienst if dienst.endswith(".service") else dienst + ".service"
-            fehlerhaft = name.startswith("nvidia-fabricmanager") and s["comp"]["baseboard"] and s["comp"]["baseboard"][0]["status"] != "ok"
-            bekannt = {"nvidia-fabricmanager.service": bool(s["comp"]["baseboard"]), "nvidia-persistenced.service": bool(s["comp"]["gpu"]),
-                       "sshd.service": True, "ssh.service": True, "systemd-journald.service": True}
-            if not bekannt.get(name):
-                return "", f"Unit {name} could not be found.\n", 4
-            zustand = "failed (Result: exit-code)" if fehlerhaft else "active (running)"
-            text = (f"● {name}\n     Loaded: loaded (/usr/lib/systemd/system/{name}; enabled; preset: enabled)\n"
-                    f"     Active: {zustand} since {datetime.now():%a %Y-%m-%d} 08:12:03 CET\n")
-            if fehlerhaft:
-                text += f"{datetime.now():%b %d} 08:12:03 {self.name} nv-fabricmanager[3120]: NVSwitch fatal error detected, links down\n"
-            return text, "", 3 if fehlerhaft else 0
-        if "restart" in a or "start" in a or "stop" in a:
-            return ""
-        return "", "Lab: unterstützt 'systemctl status <dienst>'\n", 1
-
-    def c_lsmod(self, a, i):
-        s = core.lesen()["servers"][self.name]
-        out = "Module                  Size  Used by\n"
-        if s["comp"]["gpu"]:
-            out += "nvidia_uvm           4956160  0\nnvidia_drm            122880  0\nnvidia              60678144  2 nvidia_uvm\n"
-        return out + "megaraid_sas          196608  2\nnvme                   61440  3\n"
 
     def c_ping(self, a, i):
         ziel = next((x for x in a if not x.startswith("-")), None)
@@ -964,6 +1109,424 @@ class VShell:
             if n.startswith(praefix) and (praefix.startswith(".") or not n.startswith(".")):
                 out.append(posixpath.join(d_roh, n) + ("/" if typ == "d" else ""))
         return out
+
+
+
+    # ---------------- Hilfe ----------------
+    def c_help(self, a, i):
+        if self.os == "pe":
+            return ("GNU bash, version 5.1.16 – AI PE (Lab-Simulation)\n"
+                    "Tools:    /iei/AI-EasyCfg (chmod -R +x, ./ai-easyCfg), /iei/nvflash (./nvflash.sh)\n"
+                    "fieldiag: Paket von /media nach /inspur kopieren, tar xfz <paket>.tgz, cd <paket>, ./fieldiag.sh --no_bmc --level1\n"
+                    "Treiber:  lsmod | grep nvidia, rmmod <modul>, modprobe nvidia, lsof -n -w /dev/nvidia*, kill -9 <pid>\n"
+                    "Diagnose: nvidia-smi, lspci, dmesg, ipmitool, nvidia-bug-report.sh\n"
+                    "System:   ls cd pwd cat less head tail grep cp mv rm mkdir tar chmod find echo free df lsblk mount lsusb\n")
+        return ("GNU bash, version 5.2.21(1)-release (x86_64-pc-linux-gnu) – Kunden-OS (Lab-Simulation)\n"
+                "Diagnose: nvidia-smi, dmesg, lspci, nvme, storcli64, ipmitool, journalctl, smartctl, systemctl, nvidia-bug-report.sh\n"
+                "System:   ls cd pwd cat less head tail grep wc sort uniq find echo free df lsblk ip lscpu dmidecode top ps\n"
+                "Hinweis:  fieldiag gibt es im Kunden-OS nicht – dafür von der AI PE (USB-Stick) booten.\n")
+
+    # ---------------- Treiber/Module ----------------
+    MODS_ALLE = ["nvidia_peermem", "nvidia_drm", "nvidia_modeset", "nvidia_uvm", "nvidia"]
+    MODS_NUTZER = {"nvidia": ["nvidia_uvm", "nvidia_peermem", "nvidia_modeset"], "nvidia_modeset": ["nvidia_drm"]}
+    MODS_GROESSE = {"nvidia_peermem": 16384, "nvidia_drm": 122880, "nvidia_modeset": 1556480, "nvidia_uvm": 4956160, "nvidia": 60678144}
+
+    def _mods(self, s):
+        if s.get("mods") is None:
+            s["mods"] = list(self.MODS_ALLE) if s.get("drv", True) and s["comp"]["gpu"] else []
+        return s["mods"]
+
+    def c_lsmod(self, a, i):
+        st = core.lesen()
+        s = st["servers"][self.name]
+        out = "Module                  Size  Used by\n"
+        mods = self._mods(s)
+        for m in self.MODS_ALLE:
+            if m in mods:
+                nutzer = [n for n in self.MODS_NUTZER.get(m, []) if n in mods]
+                anzahl = len(nutzer) + (1 if m == "nvidia" and s.get("persistenced") else 0)
+                out += f"{m:<22}{self.MODS_GROESSE[m]:>9}  {anzahl}{(' ' + ','.join(nutzer)) if nutzer else ''}\n"
+        out += "megaraid_sas          196608  2\nnvme                   61440  3\nmlx5_core            2195456  0\n"
+        return out
+
+    def c_rmmod(self, a, i):
+        ziele = [x for x in a if not x.startswith("-")]
+        if not ziele:
+            return "", "rmmod: ERROR: missing module name.\n", 1
+        err = []
+        with core.zustand() as st:
+            s = st["servers"][self.name]
+            mods = self._mods(s)
+            for m in ziele:
+                m = m.replace("-", "_")
+                if m not in mods:
+                    err.append(f"rmmod: ERROR: Module {m} is not currently loaded")
+                    continue
+                nutzer = [n for n in self.MODS_NUTZER.get(m, []) if n in mods]
+                if nutzer:
+                    err.append(f"rmmod: ERROR: Module {m} is in use by: {' '.join(nutzer)}")
+                    continue
+                if m == "nvidia" and s.get("persistenced"):
+                    err.append("rmmod: ERROR: Module nvidia is in use")
+                    continue
+                mods.remove(m)
+            s["drv"] = "nvidia" in mods
+            if not s["drv"]:
+                core.aktion(st, "NVIDIA-Treiber entladen")
+        return "", "\n".join(err) + ("\n" if err else ""), 1 if err else 0
+
+    def c_modprobe(self, a, i):
+        ziele = [x for x in a if not x.startswith("-")]
+        if not ziele:
+            return "", "modprobe: ERROR: missing parameters. See -h.\n", 1
+        with core.zustand() as st:
+            s = st["servers"][self.name]
+            mods = self._mods(s)
+            if "-r" in a:
+                return self.c_rmmod(ziele, i)
+            for m in ziele:
+                m = m.replace("-", "_")
+                if m not in self.MODS_ALLE:
+                    return "", f"modprobe: FATAL: Module {m} not found in directory /lib/modules/6.8.0-45-generic\n", 1
+                benoetigt = ["nvidia"] + (["nvidia_modeset"] if m == "nvidia_drm" else []) + [m]
+                for b in benoetigt:
+                    if b not in mods:
+                        mods.append(b)
+            s["drv"] = True
+        return ""
+
+    def c_lsof(self, a, i):
+        s = core.lesen()["servers"][self.name]
+        if not any("nvidia" in x for x in a):
+            return ("COMMAND    PID USER   FD   TYPE DEVICE SIZE/OFF NODE NAME\n"
+                    "systemd      1 root  cwd    DIR  259,2     4096    2 /\n")
+        if not s.get("persistenced") or not s.get("drv", True):
+            return "", "", 1
+        out = "COMMAND    PID USER   FD   TYPE  DEVICE SIZE/OFF NODE NAME\n"
+        out += "nvidia-pe 2214 root    3u   CHR 195,255      0t0  801 /dev/nvidiactl\n"
+        for k in range(len(s["comp"]["gpu"])):
+            out += f"nvidia-pe 2214 root  {4 + k}u   CHR   195,{k}      0t0  80{k + 2} /dev/nvidia{k}\n"
+        return out
+
+    def c_kill(self, a, i):
+        pids = [x for x in a if x.isdigit()]
+        if not pids:
+            return "", "kill: usage: kill [-s sigspec | -n signum | -sigspec] pid | jobspec ... or kill -l [sigspec]\n", 2
+        err = []
+        with core.zustand() as st:
+            s = st["servers"][self.name]
+            for pid in pids:
+                if pid == "2214" and s.get("persistenced"):
+                    s["persistenced"] = False
+                elif pid == "1":
+                    err.append("-bash: kill: (1) - Operation not permitted")
+                else:
+                    err.append(f"-bash: kill: ({pid}) - No such process")
+        return "", "\n".join(err) + ("\n" if err else ""), 1 if err else 0
+
+    def c_ps(self, a, i):
+        s = core.lesen()["servers"][self.name]
+        out = ("USER         PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND\n"
+               "root           1  0.0  0.0 168452 13212 ?        Ss   08:12   0:09 /sbin/init\n")
+        if s.get("persistenced"):
+            out += "root        2214  0.7  0.0 305112 12304 ?        Ssl  08:12   1:02 /usr/bin/nvidia-persistenced --verbose\n"
+        if s["comp"]["baseboard"] and s["comp"]["baseboard"][0]["status"] == "ok" and s.get("drv", True):
+            out += "root        3120  0.1  0.0 1201992 2140 ?        Ssl  08:12   0:11 /usr/bin/nv-fabricmanager -c /usr/share/nvidia/nvswitch/fabricmanager.cfg\n"
+        out += f"root        9921  0.0  0.0   8796  5120 tty1     Ss   {datetime.now():%H:%M}   0:00 -bash\n"
+        return out
+
+    def c_systemctl(self, a, i):
+        s = core.lesen()["servers"][self.name]
+        dienst = next((x for x in a if not x.startswith("-") and x not in ("status", "restart", "start", "stop", "is-active")), "")
+        name = dienst if dienst.endswith(".service") or not dienst else dienst + ".service"
+        bekannt = {"nvidia-fabricmanager.service": bool(s["comp"]["baseboard"]), "nvidia-persistenced.service": bool(s["comp"]["gpu"]),
+                   "sshd.service": True, "ssh.service": True, "systemd-journald.service": True}
+        if not dienst:
+            return "", "Lab: unterstützt 'systemctl status|start|stop <dienst>'\n", 1
+        if not bekannt.get(name):
+            return "", f"Unit {name} could not be found.\n", 4 if "status" in a else 5
+        if "stop" in a or "start" in a or "restart" in a:
+            if name == "nvidia-persistenced.service":
+                with core.zustand() as st:
+                    st["servers"][self.name]["persistenced"] = "stop" not in a
+            return ""
+        if name == "nvidia-persistenced.service":
+            aktiv = s.get("persistenced")
+            return (f"● {name} - NVIDIA Persistence Daemon\n     Loaded: loaded (/usr/lib/systemd/system/{name}; enabled)\n"
+                    f"     Active: {'active (running)' if aktiv else 'inactive (dead)'} since {datetime.now():%a %Y-%m-%d} 08:12:03 CET\n"
+                    + ("   Main PID: 2214 (nvidia-persiste)\n" if aktiv else "")), "", 0 if aktiv else 3
+        if name == "nvidia-fabricmanager.service":
+            ok = s["comp"]["baseboard"][0]["status"] == "ok" and s.get("drv", True)
+            text = (f"● {name} - NVIDIA fabric manager service\n     Loaded: loaded (/usr/lib/systemd/system/{name}; enabled; preset: enabled)\n"
+                    f"     Active: {'active (running)' if ok else 'failed (Result: exit-code)'} since {datetime.now():%a %Y-%m-%d} 08:12:03 CET\n")
+            if not ok:
+                if s["comp"]["baseboard"][0]["status"] != "ok":
+                    text += f"{datetime.now():%b %d} 08:12:03 {self.hostname} nv-fabricmanager[3120]: request to query NVSwitch device information from NVSwitch driver failed\n"
+                    text += f"{datetime.now():%b %d} 08:12:03 {self.hostname} nv-fabricmanager[3120]: detected number of NVSwitches don't match with any supported system topology, aborting fabric manager\n"
+                else:
+                    text += f"{datetime.now():%b %d} 08:12:03 {self.hostname} nv-fabricmanager[3120]: NVIDIA driver not loaded\n"
+            return text, "", 0 if ok else 3
+        return f"● {name}\n     Active: active (running)\n"
+
+    def c_mount(self, a, i):
+        out = "/dev/nvme0n1p2 on / type ext4 (rw,relatime)\nproc on /proc type proc (rw,nosuid,nodev,noexec,relatime)\n"
+        if self.os == "pe":
+            out = "overlay on / type overlay (rw,relatime)\n/dev/sdb1 on /media type ntfs3 (rw,relatime,uid=0,gid=0)\n"
+        return out
+
+    def c_lsusb(self, a, i):
+        out = "Bus 001 Device 001: ID 1d6b:0002 Linux Foundation 2.0 root hub\nBus 001 Device 002: ID 046b:ff10 American Megatrends, Inc. Virtual Keyboard and Mouse\n"
+        if self.os == "pe":
+            out += "Bus 002 Device 002: ID 0781:5581 SanDisk Corp. Ultra\n"
+        return out
+
+    def c_dcgmi(self, a, i):
+        return "", "dcgmi: Lab-Simulation – DCGM wird nicht nachgebildet (fieldiag nutzen)\n", 1
+
+    def c_chmod(self, a, i):
+        modus = next((x for x in a if not x.startswith("-")), None)
+        ziele = [x for x in a if not x.startswith("-")][1:]
+        if not modus or not ziele:
+            return "", "chmod: missing operand\nTry 'chmod --help' for more information.\n", 1
+        if not re.fullmatch(r"[ugoa]*[+-=][rwx]+|[0-7]{3,4}", modus):
+            return "", f"chmod: invalid mode: '{modus}'\n", 1
+        x_an = "x" in modus and "-" not in modus if not modus.isdigit() else int(modus[-3]) & 1
+        rekursiv = any(x in ("-R", "-r", "--recursive") or (x.startswith("-") and "R" in x) for x in a)
+        dateien = self.dateien()
+        dirs = self.verzeichnisse(dateien)
+        err = []
+        for z in ziele:
+            p = self.pfad(z)
+            if p not in dateien and p not in dirs:
+                err.append(f"chmod: cannot access '{z}': No such file or directory")
+                continue
+            betroffen = [p]
+            if rekursiv and p in dirs:
+                betroffen += [f for f in dateien if f.startswith(p.rstrip("/") + "/")]
+            for f in betroffen:
+                if f in dateien:
+                    (self.fs["exec"].add if x_an else self.fs["exec"].discard)(f)
+        return "", "\n".join(err) + ("\n" if err else ""), 1 if err else 0
+
+    def c_tar(self, a, i):
+        if not a:
+            return "", "tar: You must specify one of the '-Acdtrux', '--delete' or '--test-label' options\nTry 'tar --help' for more information.\n", 2
+        flags = ""
+        archiv, ziel_dir, k = None, None, 0
+        rest = []
+        while k < len(a):
+            x = a[k]
+            if x == "-C" and k + 1 < len(a):
+                ziel_dir = a[k + 1]
+                k += 2
+                continue
+            if (x.startswith("-") or (k == 0 and re.fullmatch(r"[xcvzft]+", x))) and not x.startswith("--"):
+                f = x.lstrip("-")
+                flags += f
+                if f.endswith("f") and k + 1 < len(a):
+                    archiv = a[k + 1]
+                    k += 2
+                    continue
+            else:
+                rest.append(x)
+            k += 1
+        if "f" in flags and not archiv and rest:
+            archiv = rest.pop(0)
+        if "x" not in flags and "t" not in flags:
+            return "", "tar: Lab-Simulation unterstützt nur Entpacken (x) und Auflisten (t)\n", 2
+        if not archiv:
+            return "", "tar: Refusing to read archive contents from terminal (missing -f option?)\n", 2
+        try:
+            inhalt = self.lesen(archiv, "tar")
+        except Fehler:
+            return "", f"tar: {archiv}: Cannot open: No such file or directory\ntar: Error is not recoverable: exiting now\n", 2
+        m = re.search(r"TGZ:([\w-]+)", inhalt if isinstance(inhalt, str) else "")
+        if not m:
+            return "", "gzip: stdin: not in gzip format\ntar: Child returned status 1\ntar: Error is not recoverable: exiting now\n", 2
+        paket = m.group(1)
+        namen = list(paket_dateien(paket)) + ["logs/"]
+        if "t" in flags:
+            return "".join(f"{paket}/{n}\n" for n in namen)
+        basis = self.pfad(ziel_dir) if ziel_dir else self.cwd
+        if basis not in self.verzeichnisse():
+            return "", f"tar: {ziel_dir}: Cannot open: No such file or directory\n", 2
+        if not core.FAST:
+            time.sleep(3)
+        d = posixpath.join(basis, paket)
+        self.fs["pakete"][d] = paket
+        self.weg.discard(d)
+        self.fs["exec"].update({f"{d}/fieldiag.sh", f"{d}/fieldiag"})
+        return "".join(f"{paket}/{n}\n" for n in namen) if "v" in flags else ""
+
+    # ---------------- nvflash ----------------
+    def _gpus_sichtbar(self, s):
+        from .tools import sichtbar
+        return [p for p in range(len(s["comp"]["gpu"])) if sichtbar(s, p) == "ok"]
+
+    def _nvflash(self, a):
+        st = core.lesen()
+        s = st["servers"][self.name]
+        m = core.MODELS[s["modell"]]
+        kopf = "NVIDIA Firmware Update Utility (Version 5.814.0) – Lab-Simulation\nCopyright (C) 1993-2023, NVIDIA Corporation. All rights reserved.\n\n"
+        if not a or "-h" in a or "--help" in a:
+            return (kopf + "Usage: ./nvflash.sh [options] [filename]\n  --version / -v     VBIOS-Version aller GPUs anzeigen\n"
+                    "  --list             Adapter auflisten\n  -i <n> --save <datei.rom>   VBIOS einer GPU sichern\n"
+                    "  -i <n> <datei.rom>          VBIOS auf GPU n schreiben\n"), "", 0
+        if self._mods(s) and "nvidia" in self._mods(s):
+            return kopf + ("ERROR: The NVIDIA kernel driver is loaded. nvflash cannot access the GPUs.\n"
+                          "       Unload it first: rmmod nvidia_peermem nvidia_drm nvidia_modeset nvidia_uvm nvidia\n"), "", 1
+        gpus = self._gpus_sichtbar(s)
+        idx = None
+        if "-i" in a and a.index("-i") + 1 < len(a):
+            try:
+                idx = int(a[a.index("-i") + 1])
+            except ValueError:
+                return kopf + "ERROR: invalid index\n", "", 1
+            if not 0 <= idx < len(gpus):
+                return kopf + f"ERROR: Adapter index {idx} not found\n", "", 1
+        if "--version" in a or "-v" in a or "--list" in a:
+            out = kopf
+            dev_id = "20B7" if "A30" in m["gpu_name"] else "20B2"
+            for n, p in enumerate(gpus if idx is None else [gpus[idx]]):
+                g = s["comp"]["gpu"][p]
+                out += (f"<{n if idx is None else idx}> {m['gpu_name']} (10DE,{dev_id},10DE,147F) S:00,B:{core.GPU_BUS[p].upper()},D:00,F:00\n"
+                        f"    Version               : {g['vbios']}" + (f"   (pending: {g['vbios_pending']}, reboot required)" if g.get("vbios_pending") else "") + "\n")
+            return out
+        if "--save" in a:
+            if idx is None:
+                return kopf + "ERROR: --save requires -i <index>\n", "", 1
+            datei = a[a.index("--save") + 1] if a.index("--save") + 1 < len(a) else ""
+            if not datei:
+                return kopf + "ERROR: missing file name\n", "", 1
+            g = s["comp"]["gpu"][gpus[idx]]
+            self.neu[self.pfad(datei)] = f"NVROM model={s['modell']} ver={g['vbios']}\n"
+            return kopf + f"Saving of image completed.\nSaved VBIOS {g['vbios']} from adapter {idx} to {datei}\n"
+        rom = next((x for x in a if x.endswith(".rom")), None)
+        if rom is None:
+            return kopf + "ERROR: no operation specified\n", "", 1
+        if idx is None:
+            return kopf + "ERROR: multiple adapters found – specify the target with -i <index>\n", "", 1
+        try:
+            inhalt = self.lesen(rom, "nvflash")
+        except Fehler as e:
+            return kopf + f"ERROR: {e}\n", "", 1
+        mm = re.search(r"model=(\S+) ver=(\S+)", inhalt)
+        if not mm:
+            return kopf + "ERROR: Invalid firmware image\n", "", 1
+        if mm.group(1) != s["modell"]:
+            return kopf + "ERROR: Board ID mismatch – image is for a different board\n", "", 1
+        if s.get("gpu_wp", True) and m["polling"]:
+            return kopf + ("ERROR: EEPROM is write protected.\n"
+                          "       Disable the GPU write protection first (AI-EasyCfg menu 29 on NF5488M6/NF5688M6/NF5488A5).\n"), "", 1
+        ver = mm.group(2)
+        phys = gpus[idx]
+
+        def bestaetigen(antwort):
+            self.dialog = None
+            if antwort.lower() != "y":
+                self.schreibe("Update aborted by user.")
+                self.rc = 1
+                return None
+            for schritt in ("Programming UPR image ...", "Programming firmware image ...", "Verifying update ..."):
+                self.schreibe(schritt)
+                if not core.FAST:
+                    time.sleep(1.5)
+            with core.zustand() as st2:
+                g = st2["servers"][self.name]["comp"]["gpu"][phys]
+                g["vbios_pending"] = ver if ver != g["vbios"] else None
+                core.aktion(st2, f"VBIOS {ver} auf GPU{phys} geschrieben (nvflash)")
+            self.schreibe(f"Update successful.\nNOTE: Reboot required for the new firmware ({ver}) to take effect.")
+            self.rc = 0
+            return None
+
+        g = s["comp"]["gpu"][phys]
+        self.dialog = ("Press 'y' to confirm (any other key to abort): ", bestaetigen)
+        return (kopf + f"Adapter: {m['gpu_name']} (index {idx}, B:{core.GPU_BUS[phys].upper()})\n"
+                f"Current      - Version:{g['vbios']}\nReplace with - Version:{ver}\n\nUpdate display adapter firmware?\n"), "", 0
+
+    # ---------------- AI-EasyCfg ----------------
+    def _easycfg(self):
+        self.schreibe(self._easycfg_menu())
+        self.dialog = ("Please input your choice: ", self._easycfg_wahl)
+        return "", "", 0
+
+    def _easycfg_menu(self):
+        return ("=" * 62 + "\n                 AI-EasyCfg V2.2 (Lab-Simulation)\n" + "=" * 62 + "\n"
+                "  1. System information            2. Log collection\n"
+                "  5. cuda samples                  6. fieldiag\n"
+                "  7. dcgm                          8. gpu_burn\n"
+                " 21. Unload NVIDIA driver         23. Reinstall NVIDIA driver\n"
+                " 24. BMC polling off              25. BMC polling on\n"
+                " 29. GPU write protection (NF5488A5/NF5688M6/NF5488M6)\n"
+                "  0. Exit\n" + "-" * 62)
+
+    def _easycfg_wahl(self, w):
+        st = core.lesen()
+        s = st["servers"][self.name]
+        m = core.MODELS[s["modell"]]
+        weiter = True
+        if w in ("0", "q", "exit"):
+            self.dialog = None
+            return None
+        if w == "1":
+            self.schreibe(f"Model: {s['modell']}   SN: {s['sn']}   BIOS: {s['fw']['BIOS']}   BMC: {s['fw']['BMC']}\n"
+                          f"GPUs: {len(self._gpus_sichtbar(s))}/{m['gpus']} x {m['gpu_name']}   Driver: {'loaded' if 'nvidia' in self._mods(s) else 'not loaded'}")
+        elif w == "2":
+            ziel = f"/iei/AI-EasyCfg/logs/{self.hostname}-{s['sn']}"
+            self.schreibe("Collecting logs (nvidia-bug-report, lspci, dmesg, ipmitool sel) ...")
+            if not core.FAST:
+                time.sleep(3)
+            self.neu[ziel + "/lspci.txt"] = tool(self.name, "lspci", ["-vvv"])[0]
+            self.neu[ziel + "/dmesg.txt"] = tool(self.name, "dmesg", [])[0]
+            self.neu[ziel + "/sel.txt"] = tool(self.name, "ipmitool", ["sel", "elist"])[0]
+            self.neu[ziel + "/pcie_width_error.log"] = ""
+            self.schreibe(f"Done. Logs: {ziel}")
+        elif w == "6":
+            pakete = [d for d in self.fs["pakete"] if d.startswith("/inspur/")]
+            if not pakete:
+                self.schreibe("fieldiag package not found in /inspur – copy and extract it first.")
+            else:
+                self.dialog = None
+                return f"cd {pakete[0]} && ./fieldiag.sh --no_bmc --level1"
+        elif w in ("5", "7", "8"):
+            self.schreibe("Lab-Simulation: dieser Test wird nicht nachgebildet – fieldiag (6) nutzen.")
+        elif w == "21":
+            with core.zustand() as st2:
+                s2 = st2["servers"][self.name]
+                s2["persistenced"] = False
+                s2["mods"] = []
+                s2["drv"] = False
+                core.aktion(st2, "NVIDIA-Treiber entladen (AI-EasyCfg 21)")
+            self.schreibe("Stopping nvidia-persistenced ... done\nrmmod nvidia_peermem nvidia_drm nvidia_modeset nvidia_uvm nvidia ... done")
+        elif w == "23":
+            with core.zustand() as st2:
+                s2 = st2["servers"][self.name]
+                s2["mods"] = list(self.MODS_ALLE)
+                s2["drv"] = True
+            self.schreibe("Installing NVIDIA driver 550.90.07 ... done (modules loaded)")
+        elif w in ("24", "25"):
+            if not m["polling"]:
+                self.schreibe(f"Not supported on {s['modell']} (only NF5488M6/NF5688M6/NF5688LM6).")
+            else:
+                an = w == "25"
+                with core.zustand() as st2:
+                    st2["servers"][self.name]["polling"] = an
+                    core.aktion(st2, "BMC-Polling " + ("an" if an else "aus") + " (AI-EasyCfg)")
+                self.schreibe(f"BMC polling {'enabled (fan control: auto)' if an else 'disabled – fans at 100 %, remember to re-enable!'}")
+        elif w == "29":
+            if not m["polling"]:
+                self.schreibe(f"Not supported on {s['modell']}.")
+            else:
+                with core.zustand() as st2:
+                    s2 = st2["servers"][self.name]
+                    s2["gpu_wp"] = not s2.get("gpu_wp", True)
+                    neu = s2["gpu_wp"]
+                self.schreibe(f"GPU write protection is now {'ENABLED' if neu else 'DISABLED'}.")
+        else:
+            self.schreibe("Invalid choice.")
+        if weiter and self.dialog:
+            self.schreibe(self._easycfg_menu())
+        return None
 
 
 # --------------------------------------------------------------------------

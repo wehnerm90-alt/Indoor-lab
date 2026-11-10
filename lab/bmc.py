@@ -10,6 +10,7 @@ import re
 import secrets
 import sys
 import threading
+import time
 import urllib.parse
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -173,6 +174,16 @@ class Handler(BaseHTTPRequestHandler):
                                           "Set-Cookie": f"QSESSIONID={token}; Path=/; HttpOnly",
                                           "Location": f"/redfish/v1/SessionService/Sessions/{token[:8]}"})
             return self.rf_fehler(401, "Invalid username or password")
+        if pfad == "/aliloginfo/onekey.tar.gz":
+            st = core.lesen()
+            s = st["servers"][name]
+            fertig = s.get("onekey_ali") and (core.FAST or core.now() - s["onekey_ali"] >= 60)
+            if not fertig:
+                return self.senden(404, "Not found", "text/plain")
+            with core.zustand() as st2:
+                core.notiert(st2, name, "onekey")
+            return self.senden(200, bmcdata.onekey(s, st), "application/gzip",
+                               {"Content-Disposition": 'attachment; filename="onekey.tar.gz"'})
         if not self.angemeldet():
             return self.rf_fehler(401, "Unauthorized")
         if pfad == "/api/session" and method == "DELETE":
@@ -252,6 +263,9 @@ class Handler(BaseHTTPRequestHandler):
             st = core.lesen()
             s = st["servers"][name]
             daten = bmcdata.onekey(s, st)
+            with core.zustand() as st2:
+                core.notiert(st2, name, "onekey")
+                bmcdata.audit(st2["servers"][name], core.BMC_USER, "One-key log collected")
             datei = f"onekeylog_{s['sn']}_{datetime.now():%Y%m%d%H%M%S}.tar.gz"
             return self.senden(200, daten, "application/gzip", {"Content-Disposition": f'attachment; filename="{datei}"'})
         if pfad == "/api/bmc/reset" and method == "POST":
@@ -288,6 +302,22 @@ class Handler(BaseHTTPRequestHandler):
         if pfad == "/api/kvm/screen":
             st = core.lesen()
             return self.senden(200, kvm.bildschirm(st["servers"][name]))
+        if pfad in ("/api/kvm/key", "/api/kvm/boot", "/api/kvm/setup") and method == "POST":
+            d = self.json_body() or {}
+            with core.zustand() as st:
+                s = st["servers"][name]
+                if pfad == "/api/kvm/key":
+                    ok = kvm.taste(st, s, str(d.get("key", "")))
+                elif pfad == "/api/kvm/boot" and s.get("phase") == "bootmenu":
+                    core.boot_wahl(st, s, int(d.get("idx", 0)))
+                    ok = True
+                elif pfad == "/api/kvm/setup" and s.get("phase") == "setup":
+                    werte = {k: v for k, v in (d.get("werte") or {}).items() if k in core.BIOS_STANDARD}
+                    core.setup_verlassen(st, s, bool(d.get("save")), werte)
+                    ok = True
+                else:
+                    ok = False
+            return self.senden(200 if ok else 409, {"ok": ok})
         if pfad.startswith("/api/kvm/shell/") and method == "POST":
             st = core.lesen()
             if kvm.bildschirm(st["servers"][name])["mode"] != "os":
@@ -297,22 +327,29 @@ class Handler(BaseHTTPRequestHandler):
                 sid = vshell.neu(name)
                 return self.senden(200, {"sid": sid, "prompt": vshell.holen(sid, name).prompt()})
             sh = vshell.holen(str(d.get("sid", "")), name)
-            if not sh:
+            if not sh or sh.boot_id != st["servers"][name].get("boot_id"):
                 return self.senden(410, {"message": "Session expired"})
             zeile = str(d.get("line", ""))[:2000]
             if pfad == "/api/kvm/shell/exec":
-                with vshell_lock(sh):
-                    out, akt = sh.ausfuehren(zeile)
-                return self.senden(200, {"output": out, "action": akt, "prompt": sh.prompt()})
+                return self.senden(200 if sh.start(zeile) else 409, {"ok": True})
+            if pfad == "/api/kvm/shell/poll":
+                pos = int(d.get("pos", 0))
+                ende = time.time() + 5
+                while sh.laeuft and len(sh.puffer) <= pos and time.time() < ende:
+                    time.sleep(0.1)
+                daten, neu_pos = sh.abholen(pos)
+                return self.senden(200, {"data": daten, "pos": neu_pos, "running": sh.laeuft,
+                                         "prompt": sh.prompt(), "action": None if sh.laeuft else sh.aktion})
+            if pfad == "/api/kvm/shell/interrupt":
+                sh.unterbrechen()
+                return self.senden(200, {"ok": True})
             if pfad == "/api/kvm/shell/complete":
                 return self.senden(200, {"matches": sh.vervollstaendigen(zeile)[:200]})
-        if pfad == "/api/kvm/exec" and method == "POST":
+        if pfad == "/api/seen" and method == "POST":
             d = self.json_body() or {}
-            st = core.lesen()
-            if kvm.bildschirm(st["servers"][name])["mode"] != "os":
-                return self.senden(409, {"output": "", "action": None, "message": "Host OS not running"})
-            out, akt = kvm.ausfuehren(name, str(d.get("cmd", ""))[:500])
-            return self.senden(200, {"output": out, "action": akt})
+            with core.zustand() as st:
+                core.notiert(st, name, str(d.get("what", "")))
+            return self.senden(200, {"ok": True})
         if pfad == "/api/fw/cancel" and method == "POST":
             PENDING.pop(name, None)
             return self.senden(200, {"ok": True})

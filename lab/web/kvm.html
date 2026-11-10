@@ -2,122 +2,132 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>KVM (Lab)</title>
+<title>H5Viewer (Lab)</title>
 <style>
   html, body { margin:0; height:100%; background:#2b2f36; font-family:"Segoe UI", system-ui, sans-serif; }
-  #bar { background:#1f2a3a; color:#cfd8e3; display:flex; align-items:center; gap:8px; padding:6px 10px; font-size:13px; }
-  #bar b { color:#fff; margin-right:10px; } #bar .sp { flex:1; }
-  #bar button { background:#2b394d; color:#e6edf5; border:1px solid #3d4f69; border-radius:3px; padding:4px 10px; font:inherit; cursor:pointer; }
+  #bar { background:#1f2a3a; color:#cfd8e3; display:flex; align-items:center; gap:6px; padding:6px 10px; font-size:13px; flex-wrap:wrap; }
+  #bar b { color:#fff; margin-right:8px; } #bar .sp { flex:1; } #bar .sep { width:1px; height:20px; background:#3d4f69; margin:0 4px; }
+  #bar button { background:#2b394d; color:#e6edf5; border:1px solid #3d4f69; border-radius:3px; padding:4px 9px; font:inherit; cursor:pointer; }
   #bar button:hover { background:#36506f; }
-  #screen { position:absolute; top:36px; left:0; right:0; bottom:22px; background:#000; color:#c8c8c8; overflow:auto;
+  #screen { position:absolute; top:38px; left:0; right:0; bottom:22px; background:#000; color:#c8c8c8; overflow:auto;
             font:15px/1.35 "Cascadia Mono", Consolas, "DejaVu Sans Mono", monospace; padding:10px 14px; white-space:pre-wrap; word-break:break-all; outline:none; }
-  #screen.post { color:#e8e8e8; }
-  #nosig { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#888; font-size:20px; }
+  #nosig { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#888; font-size:20px; text-align:center; }
   .cur { background:#c8c8c8; color:#000; animation:blink 1s steps(1) infinite; }
   @keyframes blink { 50% { background:transparent; color:inherit; } }
   .bar2 { display:inline-block; width:300px; height:10px; border:1px solid #888; vertical-align:middle; } .bar2 i { display:block; height:100%; background:#3a7bd5; }
   #status { position:absolute; bottom:0; left:0; right:0; height:22px; background:#1f2a3a; color:#8fa1b5; font-size:12px; line-height:22px; padding:0 10px; }
+  /* BIOS-Setup */
+  .bios { position:absolute; inset:0; background:#0000aa; color:#fff; font:15px/1.4 "Cascadia Mono", Consolas, monospace; }
+  .bios .top { background:#00aaaa; color:#fff; padding:2px 10px; display:flex; gap:18px; } .bios .top span.on { background:#fff; color:#0000aa; padding:0 6px; }
+  .bios .title { text-align:center; background:#00aaaa; color:#fff; }
+  .bios .body { display:flex; height:calc(100% - 80px); } .bios .left { flex:2; padding:12px 18px; border-right:2px solid #aaa; } .bios .right { flex:1; padding:12px; color:#ccc; }
+  .bios .item { padding:1px 4px; } .bios .item.sel { background:#fff; color:#0000aa; } .bios .val { float:right; color:#ff0; } .bios .item.sel .val { color:#0000aa; }
+  .bios .foot { position:absolute; bottom:0; left:0; right:0; background:#00aaaa; padding:2px 10px; }
+  .bios .dlg { position:absolute; left:30%; top:35%; width:40%; background:#aaa; color:#000; border:2px solid #fff; padding:14px; text-align:center; }
+  .menu { position:absolute; left:20%; top:20%; width:60%; border:2px solid #aaa; background:#000080; color:#fff; padding:14px; font:15px/1.6 Consolas, monospace; }
+  .menu div.sel { background:#fff; color:#000080; }
 </style>
 </head>
 <body>
-<div id="bar"><b id="title">KVM</b>
+<div id="bar"><b id="title">H5Viewer</b>
   <button onclick="pw('on')">Power On</button><button onclick="pw('soft')">Power Off</button>
-  <button onclick="pw('cycle')">Reset</button><button onclick="cad()">Ctrl+Alt+Del</button>
+  <button onclick="pw('reset')">Reset</button><span class="sep"></span>
+  <button onclick="hot('DEL')" title="Hotkey senden">DEL</button><button onclick="hot('F11')">F11</button>
+  <button onclick="hot('F12')">F12</button><button onclick="cad()">Ctrl+Alt+Del</button>
   <span class="sp"></span><span>Lab-Simulation</span>
 </div>
 <div id="screen" tabindex="0"></div>
-<div id="status">Click into the screen to type.</div>
+<div id="status">Click into the screen to type. Browser-F11 = Vollbild – nutze die Buttons DEL/F11 oben.</div>
 <script>
 const scr = document.getElementById('screen');
-let mode = null, host = '', phase = 'login', buf = '', cur = 0, lines = [], busy = false, hist = [], hpos = 0, user = '', sid = null, prm = '';
+let mode = null, host = '', osTyp = '', bootId = null, phase = 'login', buf = '', cur = 0, lines = [], hist = [], hpos = 0, user = '';
+let sid = null, prm = '', pos = 0, running = false, completing = false, queue = [];
+let biosD = null, bTab = 0, bSel = 0, bWerte = null, bDlg = null, menuSel = 0, menuZiele = [];
 const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-function prompt() { return phase === 'login' ? `${host} login: ` : phase === 'pass' ? 'Password: ' : prm; }
-function draw() {
-  if (mode === 'off') { scr.className = ''; scr.innerHTML = '<div id="nosig">No Signal</div>'; return; }
-  if (mode !== 'os') return;
-  let line = '';
-  if (!busy) {
-    const shown = phase === 'pass' ? '' : buf, c = phase === 'pass' ? 0 : cur;
-    line = esc(prompt() + shown.slice(0, c)) + '<span class="cur">' + (esc(shown[c] || ' ')) + '</span>' + esc(shown.slice(c + 1));
-  }
-  scr.innerHTML = esc(lines.join('\n')) + (lines.length ? '\n' : '') + line;
-  scr.scrollTop = scr.scrollHeight;
-}
-function out(...t) { for (const x of t) lines.push(...String(x).split('\n')); if (lines.length > 5000) lines = lines.slice(-5000); }
-function loginScreen() { lines = ['', `Ubuntu 24.04 LTS ${host} tty1`, '']; phase = 'login'; buf = ''; cur = 0; sid = null; draw(); }
-async function poll() {
-  let r;
-  try { r = await fetch('/api/kvm/screen'); } catch (e) { return; }
-  if (r.status === 401) { scr.innerHTML = '<div id="nosig">Session expired – please log in to the BMC web interface again.</div>'; return; }
-  if (r.status === 503) { scr.innerHTML = '<div id="nosig">BMC is rebooting …</div>'; mode = null; return; }
-  const d = await r.json();
-  if (d.mode === 'post') {
-    mode = 'post'; scr.className = 'post';
-    scr.innerHTML = esc(d.lines.join('\n')) + `\n\n<span class="bar2"><i style="width:${d.pct}%"></i></span>`;
-  } else if (d.mode === 'os') {
-    host = d.hostname; document.title = 'KVM ' + host; document.getElementById('title').textContent = 'KVM · ' + host;
-    if (mode !== 'os') { mode = 'os'; scr.className = ''; loginScreen(); }
-  } else { mode = 'off'; draw(); }
-}
 async function call(p, body) {
-  const r = await fetch(p, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  const r = await fetch(p, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {})});
   let j = {}; try { j = await r.json(); } catch (e) {}
   return [r.status, j];
 }
+// ---------------- Konsole ----------------
+function prompt() { return phase === 'login' ? `${host} login: ` : phase === 'pass' ? 'Password: ' : prm; }
+function draw() {
+  if (mode !== 'os') return;
+  let line = '';
+  if (!running) {
+    const shown = phase === 'pass' ? '' : buf, c = phase === 'pass' ? 0 : cur;
+    line = esc(prompt() + shown.slice(0, c)) + '<span class="cur">' + esc(shown[c] || ' ') + '</span>' + esc(shown.slice(c + 1));
+  }
+  let txt = lines.join('\n');
+  scr.innerHTML = esc(txt) + (lines.length && !txt.endsWith('\n') ? '\n' : '') + line;
+  scr.scrollTop = scr.scrollHeight;
+}
+function out(...t) { for (const x of t) lines.push(...String(x).split('\n')); if (lines.length > 6000) lines = lines.slice(-6000); }
+function rawOut(t) { if (!t) return; const teile = t.split('\n'); if (teile[teile.length - 1] === '') teile.pop(); out(...teile); }
+function loginScreen() {
+  lines = ['', osTyp === 'pe' ? 'AI PE live system (Ubuntu 22.04 based) – Lab-Simulation' : `Ubuntu 24.04 LTS ${host} tty1`, ''];
+  phase = 'login'; buf = ''; cur = 0; sid = null; running = false; draw();
+}
 async function startShell() {
-  const [c, j] = await call('/api/kvm/shell/start', {});
+  const [c, j] = await call('/api/kvm/shell/start');
   if (c !== 200) { out('Connection to host lost.'); loginScreen(); return; }
-  sid = j.sid; prm = j.prompt; phase = 'shell';
-  out(`Welcome to Ubuntu 24.04 LTS (GNU/Linux 6.8.0-45-generic x86_64)`, '', ` * Lab-Simulation. Type "help" for an overview.`, '',
-      `Last login: ${new Date().toDateString()} from 10.20.0.5`);
+  sid = j.sid; prm = j.prompt; pos = 0; phase = 'shell';
+  if (osTyp === 'pe') out('', 'Welcome to AI PE.  Test tools: /iei   fieldiag packages: /media   Type "help".', '');
+  else out(`Welcome to Ubuntu 24.04 LTS (GNU/Linux 6.8.0-45-generic x86_64)`, '', ' * Customer production system. Type "help" for an overview.', '',
+           `Last login: ${new Date().toDateString()} from 10.20.0.5`);
   draw();
 }
 async function run(cmd) {
-  busy = true; draw();
-  try {
-    const [c, d] = await call('/api/kvm/shell/exec', {sid, line: cmd});
-    if (c === 410) { out('Session expired.'); busy = false; loginScreen(); return; }
-    if (c === 409) { out('Connection to host lost.'); busy = false; mode = null; draw(); return; }
-    if (d.action === 'clear') lines = [];
-    if (d.output) out(d.output);
-    if (d.prompt) prm = d.prompt;
-    if (d.action === 'logout') { busy = false; setTimeout(loginScreen, 300); draw(); return; }
-    if (d.action === 'reboot' || d.action === 'off') { busy = true; draw(); mode = null; busy = false; return; }
-  } catch (e) { out('(Verbindung zum BMC unterbrochen)'); }
-  busy = false; draw();
+  running = true; draw();
+  const [c] = await call('/api/kvm/shell/exec', {sid, line: cmd});
+  if (c === 410) { out('Session expired.'); running = false; loginScreen(); return; }
+  if (c === 409) { running = false; out('Connection to host lost.'); mode = null; draw(); return; }
+  await pollShell();
+}
+async function pollShell() {
+  while (true) {
+    let c, d;
+    try { [c, d] = await call('/api/kvm/shell/poll', {sid, pos}); } catch (e) { out('(Verbindung zum BMC unterbrochen)'); break; }
+    if (c !== 200) { break; }
+    if (d.action === 'clear' && !d.running) lines = [];
+    rawOut(d.data); pos = d.pos; prm = d.prompt;
+    if (!d.running) {
+      if (d.action === 'logout') { running = false; setTimeout(loginScreen, 300); return; }
+      if (d.action === 'reboot' || d.action === 'off') { running = false; draw(); mode = null; return; }
+      break;
+    }
+    draw();
+  }
+  running = false; draw();
+  const q = queue; queue = []; for (const ev of q) handleKey(ev);
 }
 async function complete() {
   completing = true;
-  try { await doComplete(); } finally { completing = false; const q = queue; queue = []; for (const ev of q) handleKey(ev); }
+  try {
+    const left = buf.slice(0, cur);
+    const [c, d] = await call('/api/kvm/shell/complete', {sid, line: left});
+    const m = d.matches || []; if (!m.length) return;
+    const word = left.split(' ').pop();
+    let pre = m[0];
+    for (const x of m) { let k = 0; while (k < pre.length && pre[k] === x[k]) k++; pre = pre.slice(0, k); }
+    if (m.length === 1) pre = m[0] + (m[0].endsWith('/') ? '' : ' ');
+    if (pre.length > word.length) { buf = left.slice(0, left.length - word.length) + pre + buf.slice(cur); cur = left.length - word.length + pre.length; }
+    else if (m.length > 1) out(prompt() + buf, m.map(x => (x.replace(/\/$/, '').split('/').pop()) + (x.endsWith('/') ? '/' : '')).join('  '));
+    draw();
+  } finally { completing = false; const q = queue; queue = []; for (const ev of q) handleKey(ev); }
 }
-async function doComplete() {
-  const left = buf.slice(0, cur);
-  const [c, d] = await call('/api/kvm/shell/complete', {sid, line: left});
-  const m = (d.matches || []);
-  if (!m.length) return;
-  const word = left.split(' ').pop();
-  let pre = m[0];
-  for (const x of m) { let k = 0; while (k < pre.length && pre[k] === x[k]) k++; pre = pre.slice(0, k); }
-  if (m.length === 1) pre = m[0] + (m[0].endsWith('/') ? '' : ' ');
-  if (pre.length > word.length) {
-    buf = left.slice(0, left.length - word.length) + pre + buf.slice(cur); cur = left.length - word.length + pre.length;
-  } else if (m.length > 1) {
-    out(prompt() + buf, m.map(x => x.replace(/\/$/, '/').split('/').filter(Boolean).pop() + (x.endsWith('/') ? '/' : '')).join('  '));
-  }
-  draw();
-}
-let completing = false, queue = [];
-scr.addEventListener('keydown', e => {
-  if (mode === 'os' && !busy && completing) { e.preventDefault(); queue.push({key: e.key, ctrlKey: e.ctrlKey, altKey: e.altKey, metaKey: e.metaKey, preventDefault() {}}); return; }
-  handleKey(e);
-});
-function handleKey(e) {
-  if (mode !== 'os' || busy) { if (e.key.length === 1 || e.key === 'Enter') e.preventDefault(); return; }
+function shellKey(e) {
   const k = e.key, ctrl = e.ctrlKey && !e.altKey;
+  if (running) {
+    if (ctrl && k === 'c') { e.preventDefault(); call('/api/kvm/shell/interrupt', {sid}); }
+    else if (k.length === 1 || k === 'Enter') e.preventDefault();
+    return;
+  }
+  if (completing) { e.preventDefault(); queue.push({key: k, ctrlKey: e.ctrlKey, altKey: e.altKey, metaKey: e.metaKey, preventDefault() {}}); return; }
   const ins = t => { buf = buf.slice(0, cur) + t + buf.slice(cur); cur += t.length; };
   if (ctrl && k === 'l') { e.preventDefault(); lines = []; return draw(); }
-  if (ctrl && k === 'c') { e.preventDefault(); out(prompt() + (phase === 'pass' ? '' : buf) + '^C'); buf = ''; cur = 0; return draw(); }
-  if (ctrl && k === 'd') { e.preventDefault(); if (phase === 'shell' && !buf) run('exit'); return; }
+  if (ctrl && k === 'c') { e.preventDefault(); out(prompt() + (phase === 'pass' ? '' : buf) + '^C'); buf = ''; cur = 0; if (phase === 'shell' && sid) call('/api/kvm/shell/interrupt', {sid}).then(() => call('/api/kvm/shell/poll', {sid, pos})).then(([c, d]) => { if (d) { prm = d.prompt; pos = d.pos; } draw(); }); return draw(); }
+  if (ctrl && k === 'd') { e.preventDefault(); if (phase === 'shell' && !buf) { out(prompt()); run('exit'); } return; }
   if (ctrl && k === 'a') { e.preventDefault(); cur = 0; return draw(); }
   if (ctrl && k === 'e') { e.preventDefault(); cur = buf.length; return draw(); }
   if (ctrl && k === 'u') { e.preventDefault(); buf = buf.slice(cur); cur = 0; return draw(); }
@@ -130,11 +140,13 @@ function handleKey(e) {
     if (phase === 'login') { out(prompt() + val); if (val.trim()) { user = val.trim(); phase = 'pass'; } return draw(); }
     if (phase === 'pass') {
       out('Password: ');
-      if (user !== 'root' || !val) { out('', 'Login incorrect', ''); phase = 'login'; return draw(); }
+      const ok = user === 'root' && (osTyp === 'pe' ? val === '111111' : val.length > 0);
+      if (!ok) { out('', 'Login incorrect', ''); phase = 'login'; return draw(); }
       return startShell();
     }
     out(prompt() + val);
-    if (val.trim()) { hist.push(val); hpos = hist.length; run(val); } else draw();
+    if (val.trim() && prm.startsWith('root@')) { hist.push(val); hpos = hist.length; }
+    run(val);
     return;
   }
   if (k === 'Backspace') { e.preventDefault(); if (cur > 0) { buf = buf.slice(0, cur - 1) + buf.slice(cur); cur--; } return draw(); }
@@ -147,14 +159,117 @@ function handleKey(e) {
   if (k === 'ArrowDown' && phase === 'shell') { e.preventDefault(); hpos = Math.min(hist.length, hpos + 1); buf = hist[hpos] || ''; cur = buf.length; return draw(); }
   if (k.length === 1 && !e.ctrlKey && !e.metaKey) { e.preventDefault(); ins(k); draw(); }
 }
-scr.addEventListener('paste', e => { if (mode === 'os' && !busy) { const t = (e.clipboardData.getData('text') || '').replace(/\r?\n/g, ' '); buf = buf.slice(0, cur) + t + buf.slice(cur); cur += t.length; draw(); e.preventDefault(); } });
-async function pw(action) {
-  if (action !== 'on' && !confirm('Really ' + action + '?')) return;
-  await call('/api/power', {action});
-  mode = null; poll();
+// ---------------- BIOS-Setup ----------------
+const TABS = [
+  ['Main', [['i', 'BIOS Version', d => d.info.bios], ['i', 'BMC Firmware Version', d => d.info.bmc], ['i', 'ME Firmware Version', d => d.info.me],
+            ['i', 'Product Name', d => d.info.modell], ['i', 'Total Memory', d => d.info.ram + ' GB']]],
+  ['Advanced', [['h', 'PCI Subsystem Settings'], ['e', '  SR-IOV Support', 'sriov', ['Enabled', 'Disabled']],
+                ['h', 'Trusted Computing'], ['i', '  Security Device Support', () => 'Enable']]],
+  ['Socket Configuration', [['h', 'IIO Configuration'], ['e', '  Intel VT for Directed I/O (VT-d)', 'vtd', ['Enabled', 'Disabled']],
+                            ['h', 'Processor Configuration'], ['i', '  Hyper-Threading [ALL]', () => 'Enable']]],
+  ['Server Mgmt', [['e', 'Restore on AC Power Loss', 'acloss', ['Last State', 'Power On', 'Power Off']],
+                   ['h', 'BMC Network Configuration'], ['i', '  Station IP address', d => d.info.bmc_ip]]],
+  ['Boot', [['e', 'Boot Mode Select', 'bootmode', ['UEFI', 'Legacy']], ['i', 'Boot Option #1', () => 'UEFI OS (NVMe0)']]],
+  ['Save & Exit', [['a', 'Save Changes and Reset', 'save'], ['a', 'Discard Changes and Exit', 'discard']]],
+];
+const HELP = {sriov: 'SR-IOV muss für fieldiag aktiv sein.', vtd: 'Für fieldiag muss VT-d aus sein. Danach wieder auf den Kundenstand!',
+  acloss: 'Verhalten nach Stromausfall.', bootmode: 'Muss zum installierten OS passen (UEFI).', save: 'F10', discard: 'ESC'};
+function wahlbar() { return TABS[bTab][1].map((x, i) => [x, i]).filter(([x]) => x[0] === 'e' || x[0] === 'a').map(([, i]) => i); }
+function drawBios() {
+  const d = biosD; const items = TABS[bTab][1]; const w = wahlbar(); if (!w.includes(bSel)) bSel = w[0] ?? -1;
+  let h = `<div class="bios"><div class="title">Aptio Setup – American Megatrends International, LLC.  (Lab)</div><div class="top">`;
+  TABS.forEach((t, i) => h += `<span class="${i === bTab ? 'on' : ''}">${t[0]}</span>`);
+  h += '</div><div class="body"><div class="left">';
+  items.forEach((it, i) => {
+    let val = it[0] === 'e' ? `[${bWerte[it[2]]}]` : it[0] === 'i' ? esc(it[2](d)) : '';
+    if (it[0] === 'h') h += `<div class="item" style="color:#aaf">${esc(it[1])}</div>`;
+    else h += `<div class="item ${i === bSel ? 'sel' : ''}">${esc(it[1])}<span class="val">${val}</span></div>`;
+  });
+  const sel = items[bSel]; const hilfe = sel ? (HELP[sel[2]] || '') : '';
+  h += `</div><div class="right">${esc(hilfe)}<br><br>→←: Select Screen<br>↑↓: Select Item<br>Enter/+/-: Change<br>F10: Save & Reset<br>ESC: Exit</div></div>`;
+  h += `<div class="foot">Version 2.22.1287  Copyright (C) 2024 AMI  –  Lab-Simulation</div>`;
+  if (bDlg) h += `<div class="dlg">${esc(bDlg.text)}<br><br>[Yes] = Y / Enter     [No] = N / ESC</div>`;
+  h += '</div>';
+  scr.innerHTML = h;
 }
-function cad() { if (mode === 'os' && confirm('Send Ctrl+Alt+Del (reboot)?')) pw('cycle'); }
-scr.focus(); poll(); setInterval(poll, 1500);
+async function biosKey(e) {
+  const k = e.key; e.preventDefault();
+  if (bDlg) {
+    if (k === 'y' || k === 'Y' || k === 'Enter') { const a = bDlg.a; bDlg = null; await call('/api/kvm/setup', {save: a === 'save', werte: bWerte}); mode = null; poll(); }
+    else if (k === 'n' || k === 'N' || k === 'Escape') { bDlg = null; drawBios(); }
+    return;
+  }
+  const w = wahlbar();
+  if (k === 'ArrowRight') { bTab = (bTab + 1) % TABS.length; bSel = -1; }
+  else if (k === 'ArrowLeft') { bTab = (bTab + TABS.length - 1) % TABS.length; bSel = -1; }
+  else if (k === 'ArrowDown' && w.length) { bSel = w[(w.indexOf(bSel) + 1) % w.length]; }
+  else if (k === 'ArrowUp' && w.length) { bSel = w[(w.indexOf(bSel) + w.length - 1) % w.length]; }
+  else if (k === 'Enter' || k === '+' || k === '-') {
+    const it = TABS[bTab][1][bSel]; if (!it) return;
+    if (it[0] === 'e') { const opts = it[3]; const i = opts.indexOf(bWerte[it[2]]); bWerte[it[2]] = opts[(i + (k === '-' ? opts.length - 1 : 1)) % opts.length]; }
+    else if (it[0] === 'a') bDlg = {a: it[2], text: it[2] === 'save' ? 'Save configuration and reset?' : 'Quit without saving?'};
+  }
+  else if (k === 'F10') bDlg = {a: 'save', text: 'Save configuration and reset?'};
+  else if (k === 'Escape') bDlg = {a: 'discard', text: 'Quit without saving?'};
+  drawBios();
+}
+// ---------------- Bootmenue ----------------
+function drawMenu() {
+  scr.innerHTML = `<div class="menu">Please select boot device:<br><br>${menuZiele.map((z, i) => `<div class="${i === menuSel ? 'sel' : ''}">&nbsp;${esc(z)}</div>`).join('')}
+    <br>↑ and ↓ to move selection<br>ENTER to select boot device<br>ESC to boot using defaults</div>`;
+}
+async function menuKey(e) {
+  e.preventDefault();
+  if (e.key === 'ArrowDown') menuSel = (menuSel + 1) % menuZiele.length;
+  else if (e.key === 'ArrowUp') menuSel = (menuSel + menuZiele.length - 1) % menuZiele.length;
+  else if (e.key === 'Enter' || e.key === 'Escape') { await call('/api/kvm/boot', {idx: e.key === 'Enter' ? menuSel : 0}); mode = null; return poll(); }
+  drawMenu();
+}
+// ---------------- Bildschirm-Abfrage ----------------
+async function poll() {
+  let r;
+  try { r = await fetch('/api/kvm/screen'); } catch (e) { return; }
+  if (r.status === 401) { mode = 'x'; scr.innerHTML = '<div id="nosig">Session expired – please log in to the BMC web interface again.</div>'; return; }
+  if (r.status === 503) { mode = null; scr.innerHTML = '<div id="nosig">BMC is rebooting …</div>'; return; }
+  const d = await r.json();
+  document.getElementById('title').textContent = 'H5Viewer';
+  if (d.mode === 'post') {
+    mode = 'post';
+    scr.innerHTML = esc(d.lines.join('\n')) + `\n\n<span class="bar2"><i style="width:${d.pct}%"></i></span>`;
+  } else if (d.mode === 'setup') {
+    if (mode !== 'setup') { biosD = d; bWerte = {...d.bios}; bTab = 0; bSel = -1; bDlg = null; mode = 'setup'; }
+    biosD.info = d.info; drawBios();
+  } else if (d.mode === 'bootmenu') {
+    if (mode !== 'bootmenu') { menuSel = 0; mode = 'bootmenu'; }
+    menuZiele = d.ziele; drawMenu();
+  } else if (d.mode === 'noboot') {
+    mode = 'noboot'; scr.innerHTML = esc('Reboot and Select proper Boot device\nor Insert Boot Media in selected Boot device and press a key\n') + '<span class="cur"> </span>';
+  } else if (d.mode === 'os') {
+    host = d.hostname; document.title = 'H5Viewer ' + host;
+    if (mode !== 'os' || bootId !== d.boot_id) { mode = 'os'; osTyp = d.os; bootId = d.boot_id; loginScreen(); }
+  } else { mode = 'off'; scr.innerHTML = '<div id="nosig">No Signal</div>'; }
+}
+function handleKey(e) {
+  if (mode === 'os') return shellKey(e);
+  if (mode === 'setup') return biosKey(e);
+  if (mode === 'bootmenu') return menuKey(e);
+  if (mode === 'post') {
+    const map = {Delete: 'DEL', Escape: 'ESC', F2: 'F2', F11: 'F11', F12: 'F12'};
+    if (map[e.key]) { e.preventDefault(); hot(map[e.key]); }
+    return;
+  }
+  if (mode === 'noboot' && e.key.length === 1) { e.preventDefault(); pw('reset', true); }
+}
+scr.addEventListener('keydown', handleKey);
+scr.addEventListener('paste', e => { if (mode === 'os' && !running) { const t = (e.clipboardData.getData('text') || '').replace(/\r?\n/g, ' '); buf = buf.slice(0, cur) + t + buf.slice(cur); cur += t.length; draw(); e.preventDefault(); } });
+async function hot(key) { scr.focus(); if (mode === 'post') { await call('/api/kvm/key', {key}); poll(); } }
+async function pw(action, still) {
+  if (!still && action !== 'on' && !confirm('Really ' + action + '?')) return;
+  await call('/api/power', {action});
+  mode = null; poll(); scr.focus();
+}
+function cad() { if (confirm('Send Ctrl+Alt+Del (reboot)?')) pw('reset', true); }
+scr.focus(); poll(); setInterval(() => { if (!running) poll(); }, 1200);
 </script>
 </body>
 </html>
